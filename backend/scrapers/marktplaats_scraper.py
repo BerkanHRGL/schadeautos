@@ -26,7 +26,7 @@ GOOD_DAMAGE_KEYWORDS = [
     'plaatwerk schade', 'plaatwerkschade', 'carrosserie schade',
     # Dutch - general repairable
     'aanrijding', 'aanrijdingsschade',
-    # Dutch - general schade (when combined with search context)
+    # Dutch - general schade
     'schade', 'beschadigd', 'beschadigde',
     # English equivalents
     'side damage', 'cosmetic damage', 'minor damage', 'paint damage',
@@ -95,11 +95,19 @@ class MarktplaatsScraper(BaseScraper):
                 except Exception as e:
                     self.logger.error(f"Error during page interaction: {e}")
 
-            # Pass the search term so we know context
-            cars = self.extract_car_data(html, self.base_url, search_term=term)
-            if cars:
-                all_cars.extend(cars)
-                self.logger.info(f"Found {len(cars)} damage cars for term '{term}'")
+            # Step 1: Extract car URLs and basic info from search results
+            candidates = self._extract_car_urls(html, self.base_url)
+            self.logger.info(f"Found {len(candidates)} car listings for term '{term}'")
+
+            # Step 2: Visit each car page to read the FULL description
+            for candidate in candidates:
+                try:
+                    car = await self._fetch_full_car_details(candidate, term)
+                    if car:
+                        all_cars.append(car)
+                except Exception as e:
+                    self.logger.error(f"Error fetching car details: {e}")
+                    continue
 
         # Remove duplicates based on URL
         seen_urls = set()
@@ -112,9 +120,10 @@ class MarktplaatsScraper(BaseScraper):
         self.logger.info(f"Total unique damage cars from Marktplaats: {len(unique_cars)}")
         return unique_cars
 
-    def extract_car_data(self, html: str, base_url: str = "", search_term: str = "") -> List[Dict]:
+    def _extract_car_urls(self, html: str, base_url: str) -> List[Dict]:
+        """Extract car URLs and basic info from search results page"""
         soup = BeautifulSoup(html, 'html.parser')
-        cars = []
+        candidates = []
 
         # Try multiple selectors
         listings = (
@@ -127,131 +136,152 @@ class MarktplaatsScraper(BaseScraper):
         if not listings:
             listings = soup.find_all('a', href=re.compile(r'/v/auto-s/.+/a\d+'))
 
-        self.logger.info(f"Found {len(listings)} listing elements")
-
-        # Check if the search term itself is damage-related
-        search_is_damage = any(kw in search_term.lower() for kw in [
-            'schade', 'lakschade', 'deuk', 'kras', 'hagel', 'bumper',
-            'zijschade', 'aanrijding', 'plaatwerkschade', 'beschadigd'
-        ])
-
         for listing in listings:
             try:
-                car = self._extract_single_car(listing, base_url)
-                if not car or not car.get('title') or not car.get('url'):
+                # Get URL
+                if listing.name == 'a':
+                    url = urljoin(base_url, listing.get('href', ''))
+                else:
+                    link_elem = listing.find('a', href=True)
+                    if not link_elem:
+                        continue
+                    url = urljoin(base_url, link_elem['href'])
+
+                if '/v/auto-s/' not in url:
                     continue
 
-                # Check for severe damage first - always exclude these
-                if self._has_severe_damage(car):
+                # Get title from search preview
+                title = ''
+                for selector in ['h3', 'h2', 'h4']:
+                    title_elem = listing.find(selector)
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                        break
+                if not title:
+                    title_elem = listing.find(class_=re.compile(r'title|Title|name|Name'))
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+
+                if not title:
                     continue
 
-                # Include if: car text mentions damage OR search term is damage-related
-                # (if someone searches "zijschade auto" and this result appears, it's likely damaged)
-                text = (car.get('title', '') + ' ' + car.get('description', '')).lower()
-                has_damage_in_text = any(kw in text for kw in GOOD_DAMAGE_KEYWORDS)
+                # Get preview image
+                img_elem = listing.find('img')
+                image_url = None
+                if img_elem:
+                    image_url = img_elem.get('src') or img_elem.get('data-src')
 
-                if has_damage_in_text or search_is_damage:
-                    # Add the search term as a damage keyword if it's damage-related
-                    if search_is_damage and search_term not in car.get('damage_keywords', []):
-                        car['damage_keywords'].append(search_term)
-                    cars.append(car)
+                # Get price from preview
+                price = None
+                price_elem = listing.find(class_=re.compile(r'price|Price|prijs'))
+                if price_elem:
+                    price = self.clean_price(price_elem.get_text(strip=True))
+                else:
+                    full_text = listing.get_text(separator=' ', strip=True)
+                    price_match = re.search(r'€\s*([\d.,]+)', full_text)
+                    if price_match:
+                        price = self.clean_price(price_match.group(0))
+
+                # Get location from preview
+                location_elem = listing.find(class_=re.compile(r'location|Location'))
+                location = location_elem.get_text(strip=True) if location_elem else ''
+
+                candidates.append({
+                    'url': url,
+                    'title': title,
+                    'price': price,
+                    'image_url': image_url,
+                    'location': location,
+                })
 
             except Exception as e:
-                self.logger.error(f"Error extracting car data: {e}")
+                self.logger.error(f"Error extracting car URL: {e}")
                 continue
 
-        return cars
+        return candidates
 
-    def _has_severe_damage(self, car: Dict) -> bool:
-        """Check if the car has severe/unrepairable damage"""
-        text = (car.get('title', '') + ' ' + car.get('description', '')).lower()
+    async def _fetch_full_car_details(self, candidate: Dict, search_term: str) -> Optional[Dict]:
+        """Visit the individual car page and read the FULL description"""
+        url = candidate['url']
+        self.logger.info(f"Fetching full details: {candidate['title'][:50]}")
 
-        for keyword in SEVERE_DAMAGE_KEYWORDS:
-            if keyword in text:
-                self.logger.debug(f"Excluded (severe damage '{keyword}'): {car.get('title')}")
-                return True
-        return False
-
-    def _extract_single_car(self, listing, base_url: str) -> Optional[Dict]:
-        # Extract URL
-        if listing.name == 'a':
-            url = urljoin(base_url, listing.get('href', ''))
-        else:
-            link_elem = listing.find('a', href=True)
-            if not link_elem:
-                return None
-            url = urljoin(base_url, link_elem['href'])
-
-        if '/v/auto-s/' not in url:
+        html = await self.get_page(url)
+        if not html:
             return None
 
-        full_text = listing.get_text(separator=' ', strip=True)
+        soup = BeautifulSoup(html, 'html.parser')
 
-        # Extract title
-        title = ''
-        for selector in ['h3', 'h2', 'h4']:
-            title_elem = listing.find(selector)
-            if title_elem:
-                title = title_elem.get_text(strip=True)
+        # Extract the FULL description from the car page
+        full_description = ''
+
+        # Try various selectors for the description
+        desc_selectors = [
+            ('div', {'class': re.compile(r'description|Description')}),
+            ('section', {'class': re.compile(r'description|Description')}),
+            ('div', {'id': re.compile(r'description|Description')}),
+            ('div', {'class': re.compile(r'listing-description|ListingDescription')}),
+        ]
+
+        for tag, attrs in desc_selectors:
+            desc_elem = soup.find(tag, attrs)
+            if desc_elem:
+                full_description = desc_elem.get_text(separator=' ', strip=True)
                 break
-        if not title:
-            title_elem = listing.find(class_=re.compile(r'title|Title|name|Name'))
-            if title_elem:
-                title = title_elem.get_text(strip=True)
-        if not title:
+
+        # Fallback: get all paragraph text
+        if not full_description:
+            paragraphs = soup.find_all('p')
+            texts = [p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 30]
+            full_description = ' '.join(texts)
+
+        # Combine title + full description for damage analysis
+        combined_text = f"{candidate['title']} {full_description}".lower()
+
+        self.logger.info(f"Full description length: {len(full_description)} chars")
+
+        # Check for severe damage - EXCLUDE
+        for keyword in SEVERE_DAMAGE_KEYWORDS:
+            if keyword in combined_text:
+                self.logger.info(f"Excluded (severe: '{keyword}'): {candidate['title'][:50]}")
+                return None
+
+        # Check for good damage keywords in the FULL text
+        damage_keywords = []
+        for kw in GOOD_DAMAGE_KEYWORDS:
+            if kw in combined_text:
+                damage_keywords.append(kw)
+
+        # Must have at least one damage keyword in title or full description
+        if not damage_keywords:
+            self.logger.info(f"Excluded (no damage keywords): {candidate['title'][:50]}")
             return None
 
-        # Extract price
-        price = None
-        price_elem = listing.find(class_=re.compile(r'price|Price|prijs'))
-        if price_elem:
-            price = self.clean_price(price_elem.get_text(strip=True))
-        else:
-            price_match = re.search(r'€\s*([\d.,]+)', full_text)
-            if price_match:
-                price = self.clean_price(price_match.group(0))
+        self.logger.info(f"✅ Including: {candidate['title'][:50]} | damage: {damage_keywords[:3]}")
 
-        # Extract description
-        desc_elem = listing.find(class_=re.compile(r'description|Description|desc'))
-        description = desc_elem.get_text(strip=True) if desc_elem else ''
-
-        # Use full text as description fallback (includes all visible text)
-        if not description:
-            description = full_text[:500]
-
-        # Extract image
-        img_elem = listing.find('img')
-        image_url = None
-        if img_elem:
-            image_url = img_elem.get('src') or img_elem.get('data-src')
-
-        # Extract location
-        location_elem = listing.find(class_=re.compile(r'location|Location'))
-        location = location_elem.get_text(strip=True) if location_elem else ''
-
-        # Parse car details
-        combined_text = f"{title} {description} {full_text}"
+        # Parse car details from full text
         make, model, year, mileage = self._parse_car_details(combined_text)
 
-        # Extract damage keywords found in text
-        damage_keywords = []
-        text_lower = combined_text.lower()
-        for kw in GOOD_DAMAGE_KEYWORDS:
-            if kw in text_lower:
-                damage_keywords.append(kw)
+        # Extract all images from the car page
+        images = []
+        if candidate.get('image_url'):
+            images.append(candidate['image_url'])
+        for img in soup.find_all('img'):
+            src = img.get('src') or img.get('data-src')
+            if src and 'marktplaats' in src and src not in images:
+                images.append(src)
 
         return {
             'url': url,
             'source_website': 'marktplaats.nl',
-            'title': title,
-            'description': description,
-            'price': price,
+            'title': candidate['title'],
+            'description': full_description[:2000],
+            'price': candidate.get('price'),
             'make': make,
             'model': model,
             'year': year,
             'mileage': mileage,
-            'location': location,
-            'images': [image_url] if image_url else [],
+            'location': candidate.get('location', ''),
+            'images': images,
             'damage_keywords': damage_keywords,
             'has_cosmetic_damage_only': True,
         }
@@ -289,17 +319,11 @@ class MarktplaatsScraper(BaseScraper):
         model = None
         return make, model, year, mileage
 
+    # Keep the abstract method signature compatible
+    def extract_car_data(self, html: str, base_url: str = "") -> List[Dict]:
+        """Not used directly - scrape_search_results handles everything"""
+        return []
+
     async def scrape_car_details(self, car_url: str) -> Optional[Dict]:
-        html = await self.get_page(car_url)
-        if not html:
-            return None
-        soup = BeautifulSoup(html, 'html.parser')
-        try:
-            details = {}
-            img_elements = soup.find_all('img', src=re.compile(r'marktplaats'))
-            images = [img.get('src') for img in img_elements if img.get('src')]
-            details['images'] = images
-            return details
-        except Exception as e:
-            self.logger.error(f"Error scraping car details: {e}")
-            return None
+        """Not used - details are fetched during scrape_search_results"""
+        return None
