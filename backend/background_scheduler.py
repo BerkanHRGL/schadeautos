@@ -2,14 +2,13 @@ import schedule
 import time
 import logging
 import threading
-from scraping_service import ScrapingService
+from scraping_service import run_scraping_sync
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class BackgroundScheduler:
     def __init__(self):
-        self.scraping_service = ScrapingService()
         self.running = False
         self.thread = None
 
@@ -17,7 +16,7 @@ class BackgroundScheduler:
         """Run the scraping job"""
         logger.info("Starting scheduled scraping job...")
         try:
-            result = self.scraping_service.run_scraping_session()
+            result = run_scraping_sync()
             logger.info(f"Scraping job completed: {result}")
         except Exception as e:
             logger.error(f"Scraping job failed: {e}")
@@ -81,16 +80,3 @@ def stop_scheduler():
 def run_immediate_scraping():
     """Run immediate scraping"""
     return scheduler.run_immediate_scraping()
-
-if __name__ == "__main__":
-    # For testing
-    scheduler = BackgroundScheduler()
-
-    print("Running immediate scraping test...")
-    scheduler.run_immediate_scraping()
-
-    print("Starting scheduler for 30 seconds...")
-    scheduler.start()
-    time.sleep(30)
-    scheduler.stop()
-    print("Done")

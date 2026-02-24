@@ -194,11 +194,11 @@ async def get_car_stats(db = Depends(get_db)):
 
 # TODO: Implement proper preferences and notifications endpoints
 
-def _run_scraping_task():
+async def _run_scraping_task():
     """Background task to run scraping"""
     try:
         service = ScrapingService()
-        result = service.run_scraping_session()
+        result = await service.run_scraping_session()
         logging.getLogger(__name__).info(f"Scraping completed: {result}")
     except Exception as e:
         logging.getLogger(__name__).error(f"Scraping failed: {e}")

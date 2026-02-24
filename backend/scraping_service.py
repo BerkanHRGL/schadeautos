@@ -1,7 +1,9 @@
+import asyncio
 from sqlalchemy.orm import sessionmaker
 from database.database import engine
 from database.models import Car, ScrapingSession
-from schadevoertuigen_scraper import SchadevoertuigenScraper
+from scrapers.marktplaats_scraper import MarktplaatsScraper
+from scrapers.schadeautos_scraper import SchadeautosScraper
 import logging
 from datetime import datetime
 from typing import List, Dict
@@ -11,12 +13,21 @@ logger = logging.getLogger(__name__)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
 class ScrapingService:
     def __init__(self):
-        self.scraper = None
+        self.search_terms = [
+            'schade auto',
+            'lakschade',
+            'cosmetische schade',
+            'hagelschade',
+            'parkeerdeuk',
+            'beschadigde auto',
+            'lichte schade'
+        ]
 
-    def run_scraping_session(self) -> Dict:
-        """Run a complete scraping session and save results to database"""
+    async def _scrape_with_scraper(self, scraper, website_name: str, search_terms: List[str] = None, max_pages: int = 3) -> Dict:
+        """Run a single scraper and save results to database"""
         session = SessionLocal()
         cars_added = 0
         cars_updated = 0
@@ -25,69 +36,65 @@ class ScrapingService:
             # Create scraping session record
             scraping_session = ScrapingSession(
                 started_at=datetime.utcnow(),
-                website='marktplaats.nl',
+                website=website_name,
                 status='running'
             )
             session.add(scraping_session)
             session.commit()
 
-            # Define search terms for damaged cars
-            damage_terms = [
-                'schade auto',
-                'beschadigde auto',
-                'lakschade',
-                'cosmetische schade',
-                'lichte schade',
-                'hagelschade',
-                'parkeerdeuk'
-            ]
+            logger.info(f"Starting scraping session for {website_name}...")
 
-            logger.info("Starting scraping session...")
+            # Initialize the scraper (sets up Selenium/aiohttp)
+            await scraper.setup()
 
-            # Initialize Schadevoertuigen scraper
-            self.scraper = SchadevoertuigenScraper(headless=True)
+            # Scrape cars
+            scraped_cars = await scraper.scrape_search_results(
+                search_terms=search_terms or [],
+                max_pages=max_pages
+            )
 
-            # Scrape profitable damaged cars from schadevoertuigen.nl
-            scraped_cars = self.scraper.scrape_all_profitable_cars(max_results=50)
-
-            logger.info(f"Scraped {len(scraped_cars)} cars from schadevoertuigen.nl")
+            logger.info(f"Scraped {len(scraped_cars)} cars from {website_name}")
 
             # Process each scraped car
             for car_data in scraped_cars:
-                existing_car = session.query(Car).filter_by(url=car_data['url']).first()
+                try:
+                    existing_car = session.query(Car).filter_by(url=car_data.get('url')).first()
 
-                if existing_car:
-                    # Update existing car
-                    for key, value in car_data.items():
-                        if key != 'first_seen' and hasattr(existing_car, key):
-                            setattr(existing_car, key, value)
-                    existing_car.last_updated = datetime.utcnow()
-                    cars_updated += 1
-                else:
-                    # Add new car
-                    new_car = Car(
-                        url=car_data['url'],
-                        source_website=car_data['source_website'],
-                        title=car_data['title'],
-                        description=car_data['description'],
-                        price=car_data['price'],
-                        make=car_data['make'],
-                        model=car_data['model'],
-                        year=car_data['year'],
-                        mileage=car_data['mileage'],
-                        location=car_data['location'],
-                        images=car_data['images'],
-                        damage_keywords=car_data['damage_keywords'],
-                        has_cosmetic_damage_only=car_data['has_cosmetic_damage_only'],
-                        market_price=car_data.get('market_price'),
-                        profit_percentage=car_data.get('profit_percentage'),
-                        deal_rating=car_data.get('deal_rating'),
-                        first_seen=datetime.utcnow(),
-                        last_updated=datetime.utcnow(),
-                        is_active=True
-                    )
-                    session.add(new_car)
-                    cars_added += 1
+                    if existing_car:
+                        # Update existing car
+                        for key, value in car_data.items():
+                            if key != 'first_seen' and hasattr(existing_car, key) and value is not None:
+                                setattr(existing_car, key, value)
+                        existing_car.last_updated = datetime.utcnow()
+                        cars_updated += 1
+                    else:
+                        # Add new car
+                        new_car = Car(
+                            url=car_data.get('url'),
+                            source_website=car_data.get('source_website'),
+                            title=car_data.get('title'),
+                            description=car_data.get('description'),
+                            price=car_data.get('price'),
+                            make=car_data.get('make'),
+                            model=car_data.get('model'),
+                            year=car_data.get('year'),
+                            mileage=car_data.get('mileage'),
+                            location=car_data.get('location', ''),
+                            images=car_data.get('images', []),
+                            damage_keywords=car_data.get('damage_keywords', []),
+                            has_cosmetic_damage_only=car_data.get('has_cosmetic_damage_only', True),
+                            market_price=car_data.get('market_price'),
+                            profit_percentage=car_data.get('profit_percentage'),
+                            deal_rating=car_data.get('deal_rating'),
+                            first_seen=datetime.utcnow(),
+                            last_updated=datetime.utcnow(),
+                            is_active=True
+                        )
+                        session.add(new_car)
+                        cars_added += 1
+                except Exception as e:
+                    logger.error(f"Error processing car: {e}")
+                    continue
 
             # Update scraping session
             scraping_session.completed_at = datetime.utcnow()
@@ -98,18 +105,18 @@ class ScrapingService:
 
             session.commit()
 
-            logger.info(f"Scraping completed: {cars_added} new cars, {cars_updated} updated cars")
+            logger.info(f"{website_name}: {cars_added} new cars, {cars_updated} updated cars")
 
             return {
+                'website': website_name,
                 'success': True,
                 'cars_found': len(scraped_cars),
                 'cars_added': cars_added,
                 'cars_updated': cars_updated,
-                'session_id': scraping_session.id
             }
 
         except Exception as e:
-            logger.error(f"Scraping session failed: {e}")
+            logger.error(f"Scraping session failed for {website_name}: {e}")
             if 'scraping_session' in locals():
                 scraping_session.status = 'failed'
                 scraping_session.error_message = str(e)
@@ -117,24 +124,62 @@ class ScrapingService:
                 session.commit()
             session.rollback()
             return {
+                'website': website_name,
                 'success': False,
                 'error': str(e)
             }
         finally:
-            # Close selenium driver
-            if self.scraper:
-                try:
-                    self.scraper.close()
-                except:
-                    pass
+            await scraper.close()
             session.close()
 
-def test_scraping():
-    """Test the scraping service"""
-    service = ScrapingService()
-    result = service.run_scraping_session()
-    print(f"Scraping result: {result}")
-    return result
+    async def run_scraping_session(self) -> Dict:
+        """Run scraping across all sources"""
+        results = []
 
-if __name__ == "__main__":
-    test_scraping()
+        # Scrape marktplaats.nl
+        try:
+            logger.info("=== Starting Marktplaats scraper ===")
+            marktplaats = MarktplaatsScraper()
+            result = await self._scrape_with_scraper(
+                marktplaats, 'marktplaats.nl',
+                search_terms=self.search_terms,
+                max_pages=3
+            )
+            results.append(result)
+        except Exception as e:
+            logger.error(f"Marktplaats scraper failed: {e}")
+            results.append({'website': 'marktplaats.nl', 'success': False, 'error': str(e)})
+
+        # Scrape schadeautos.nl
+        try:
+            logger.info("=== Starting SchadeAutos scraper ===")
+            schadeautos = SchadeautosScraper()
+            result = await self._scrape_with_scraper(
+                schadeautos, 'schadeautos.nl',
+                search_terms=[],
+                max_pages=5
+            )
+            results.append(result)
+        except Exception as e:
+            logger.error(f"SchadeAutos scraper failed: {e}")
+            results.append({'website': 'schadeautos.nl', 'success': False, 'error': str(e)})
+
+        total_added = sum(r.get('cars_added', 0) for r in results)
+        total_updated = sum(r.get('cars_updated', 0) for r in results)
+        total_found = sum(r.get('cars_found', 0) for r in results)
+
+        logger.info(f"All scraping complete: {total_found} found, {total_added} added, {total_updated} updated")
+
+        return {
+            'success': all(r.get('success', False) for r in results),
+            'cars_found': total_found,
+            'cars_added': total_added,
+            'cars_updated': total_updated,
+            'results': results
+        }
+
+
+def run_scraping_sync():
+    """Synchronous wrapper to run async scraping (for use from threads)"""
+    service = ScrapingService()
+    return asyncio.run(service.run_scraping_session())
