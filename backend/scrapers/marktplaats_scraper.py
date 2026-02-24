@@ -6,6 +6,58 @@ from urllib.parse import urljoin
 from .base_scraper import BaseScraper
 import logging
 
+# Damage keywords that indicate fixable cosmetic damage (what we WANT)
+GOOD_DAMAGE_KEYWORDS = [
+    # Dutch - side damage (zijschade)
+    'zijschade', 'zij schade', 'zijkant schade', 'zijkant beschadigd',
+    # Dutch - cosmetic/light damage
+    'cosmetische schade', 'lichte schade', 'kleine schade',
+    'lakschade', 'lakbeschadiging', 'verf schade',
+    # Dutch - dents
+    'deuk', 'deukje', 'deukjes', 'deuken', 'parkeerdeuk', 'bumperdeuk',
+    # Dutch - scratches
+    'kras', 'krassen', 'krasje', 'krasjes', 'bekrast',
+    # Dutch - bumper
+    'bumper schade', 'bumper beschadigd', 'bumperschade',
+    # Dutch - hail
+    'hagelschade', 'hagel schade',
+    # Dutch - panel/body damage
+    'plaatwerk schade', 'plaatwerkschade', 'carrosserie schade',
+    # Dutch - general repairable
+    'schade auto', 'schade', 'beschadigd', 'beschadigde auto',
+    'aanrijding', 'aanrijdingsschade',
+    # English equivalents
+    'side damage', 'cosmetic damage', 'minor damage', 'paint damage',
+    'dent', 'scratch', 'bumper damage', 'hail damage', 'body damage',
+]
+
+# Severe damage keywords (what we want to EXCLUDE)
+SEVERE_DAMAGE_KEYWORDS = [
+    # Dutch - engine/mechanical
+    'motorschade', 'motor defect', 'motor kapot', 'kapotte motor',
+    'versnellingsbak', 'transmissie', 'koppeling defect',
+    'turbo defect', 'turbo kapot',
+    # Dutch - structural
+    'frame schade', 'chassis schade', 'constructie schade',
+    # Dutch - water/fire
+    'water schade', 'waterschade', 'brand schade', 'brandschade',
+    'ondergelopen',
+    # Dutch - total loss
+    'total loss', 'totaal verlies', 'total-loss',
+    # Dutch - not drivable
+    'niet rijdend', 'rijdt niet', 'niet rijdbaar', 'start niet',
+    'spring niet aan',
+    # Dutch - airbag/crash
+    'airbag', 'frontale botsing', 'frontaal',
+    # Dutch - wreck
+    'autowrak', 'wrak', 'sloop',
+    # English equivalents
+    'engine damage', 'engine failure', 'gearbox damage',
+    'flood damage', 'fire damage', 'structural damage', 'frame damage',
+    'total loss', 'write-off', 'salvage', 'not running',
+    'airbag deployed',
+]
+
 
 class MarktplaatsScraper(BaseScraper):
     def __init__(self):
@@ -18,8 +70,6 @@ class MarktplaatsScraper(BaseScraper):
         for term in search_terms:
             self.logger.info(f"Searching Marktplaats for: {term}")
 
-            # Use the URL format that works with filters
-            # f:10882 = filter for "beschadigd" (damaged)
             search_url = (
                 f"{self.base_url}/l/auto-s/"
                 f"#q:{term.replace(' ', '+')}"
@@ -36,8 +86,7 @@ class MarktplaatsScraper(BaseScraper):
             # Wait for JS to render listings
             if self.driver:
                 try:
-                    time.sleep(3)  # Wait for dynamic content
-                    # Scroll to load more
+                    time.sleep(3)
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                     time.sleep(2)
                     html = self.driver.page_source
@@ -47,9 +96,7 @@ class MarktplaatsScraper(BaseScraper):
             cars = self.extract_car_data(html, self.base_url)
             if cars:
                 all_cars.extend(cars)
-                self.logger.info(f"Found {len(cars)} cars for term '{term}'")
-            else:
-                self.logger.warning(f"No cars found for term '{term}'")
+                self.logger.info(f"Found {len(cars)} damage cars for term '{term}'")
 
         # Remove duplicates based on URL
         seen_urls = set()
@@ -59,14 +106,14 @@ class MarktplaatsScraper(BaseScraper):
                 seen_urls.add(car['url'])
                 unique_cars.append(car)
 
-        self.logger.info(f"Total unique cars from Marktplaats: {len(unique_cars)}")
+        self.logger.info(f"Total unique damage cars from Marktplaats: {len(unique_cars)}")
         return unique_cars
 
     def extract_car_data(self, html: str, base_url: str = "") -> List[Dict]:
         soup = BeautifulSoup(html, 'html.parser')
         cars = []
 
-        # Try multiple selectors - Marktplaats changes their HTML frequently
+        # Try multiple selectors
         listings = (
             soup.find_all('article', class_=re.compile(r'hz-Listing|Listing')) or
             soup.find_all('li', class_=re.compile(r'hz-Listing|Listing')) or
@@ -74,23 +121,42 @@ class MarktplaatsScraper(BaseScraper):
             soup.find_all('a', href=re.compile(r'/v/auto-s/'))
         )
 
-        self.logger.info(f"Found {len(listings)} listing elements in HTML")
-
-        # If no listings found with classes, try finding links to car pages
         if not listings:
             listings = soup.find_all('a', href=re.compile(r'/v/auto-s/.+/a\d+'))
-            self.logger.info(f"Fallback: found {len(listings)} car links")
+
+        self.logger.info(f"Found {len(listings)} listing elements")
 
         for listing in listings:
             try:
                 car = self._extract_single_car(listing, base_url)
                 if car and car.get('title') and car.get('url'):
-                    cars.append(car)
+                    # STRICT FILTER: only include cars with damage keywords
+                    if self._has_good_damage(car) and not self._has_severe_damage(car):
+                        cars.append(car)
             except Exception as e:
                 self.logger.error(f"Error extracting car data: {e}")
                 continue
 
         return cars
+
+    def _has_good_damage(self, car: Dict) -> bool:
+        """Check if the car listing mentions repairable/cosmetic damage"""
+        text = (car.get('title', '') + ' ' + car.get('description', '')).lower()
+
+        for keyword in GOOD_DAMAGE_KEYWORDS:
+            if keyword in text:
+                return True
+        return False
+
+    def _has_severe_damage(self, car: Dict) -> bool:
+        """Check if the car has severe/unrepairable damage"""
+        text = (car.get('title', '') + ' ' + car.get('description', '')).lower()
+
+        for keyword in SEVERE_DAMAGE_KEYWORDS:
+            if keyword in text:
+                self.logger.debug(f"Excluded (severe damage '{keyword}'): {car.get('title')}")
+                return True
+        return False
 
     def _extract_single_car(self, listing, base_url: str) -> Optional[Dict]:
         # Extract URL
@@ -102,26 +168,22 @@ class MarktplaatsScraper(BaseScraper):
                 return None
             url = urljoin(base_url, link_elem['href'])
 
-        # Skip non-car URLs
-        if '/v/auto-s/' not in url and '/l/auto-s/' not in url:
+        if '/v/auto-s/' not in url:
             return None
 
         full_text = listing.get_text(separator=' ', strip=True)
 
-        # Extract title - try various selectors
+        # Extract title
         title = ''
         for selector in ['h3', 'h2', 'h4']:
             title_elem = listing.find(selector)
             if title_elem:
                 title = title_elem.get_text(strip=True)
                 break
-
         if not title:
-            # Try class-based selectors
             title_elem = listing.find(class_=re.compile(r'title|Title|name|Name'))
             if title_elem:
                 title = title_elem.get_text(strip=True)
-
         if not title:
             return None
 
@@ -153,14 +215,18 @@ class MarktplaatsScraper(BaseScraper):
         combined_text = f"{title} {description} {full_text}"
         make, model, year, mileage = self._parse_car_details(combined_text)
 
-        # Extract damage keywords
-        damage_keywords = self._extract_damage_keywords(combined_text)
+        # Extract damage keywords found
+        damage_keywords = []
+        text_lower = combined_text.lower()
+        for kw in GOOD_DAMAGE_KEYWORDS:
+            if kw in text_lower:
+                damage_keywords.append(kw)
 
         return {
             'url': url,
             'source_website': 'marktplaats.nl',
             'title': title,
-            'description': description,
+            'description': description or full_text[:500],
             'price': price,
             'make': make,
             'model': model,
@@ -175,7 +241,6 @@ class MarktplaatsScraper(BaseScraper):
     def _parse_car_details(self, text: str) -> tuple:
         text_lower = text.lower()
 
-        # Car makes
         car_makes = {
             'volkswagen': 'Volkswagen', 'vw': 'Volkswagen', 'audi': 'Audi',
             'bmw': 'BMW', 'mercedes': 'Mercedes-Benz', 'opel': 'Opel',
@@ -195,11 +260,9 @@ class MarktplaatsScraper(BaseScraper):
                 make = value
                 break
 
-        # Extract year
         year_match = re.search(r'\b(20[0-2]\d|19[89]\d)\b', text)
         year = int(year_match.group(1)) if year_match else None
 
-        # Extract mileage
         mileage = None
         mileage_match = re.search(r'(\d{1,3}(?:[.,]\d{3})*)\s*km', text_lower)
         if mileage_match:
@@ -208,25 +271,10 @@ class MarktplaatsScraper(BaseScraper):
         model = None
         return make, model, year, mileage
 
-    def _extract_damage_keywords(self, text: str) -> List[str]:
-        damage_keywords = [
-            'cosmetische schade', 'lichte schade', 'lakschade', 'deukjes', 'krassen',
-            'hagelschade', 'parkeerdeuk', 'kleine schade', 'bumperdeuk', 'krasjes',
-            'schade', 'beschadigd', 'damaged', 'deuken',
-        ]
-
-        found = []
-        text_lower = text.lower()
-        for kw in damage_keywords:
-            if kw in text_lower:
-                found.append(kw)
-        return found
-
     async def scrape_car_details(self, car_url: str) -> Optional[Dict]:
         html = await self.get_page(car_url)
         if not html:
             return None
-
         soup = BeautifulSoup(html, 'html.parser')
         try:
             details = {}

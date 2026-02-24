@@ -209,6 +209,15 @@ async def run_scraping(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_scraping_task)
     return {"message": "Scraping started in background. Check /api/scraping/sessions for progress."}
 
+@app.delete("/api/cars/clear")
+async def clear_all_cars(db = Depends(get_db)):
+    """Clear all cars from database (for resetting after filter changes)"""
+    count = db.query(Car).count()
+    db.query(Car).delete()
+    db.query(ScrapingSession).delete()
+    db.commit()
+    return {"message": f"Deleted {count} cars and all scraping sessions"}
+
 @app.get("/api/scraping/sessions")
 async def get_scraping_sessions(db = Depends(get_db)):
     """Get recent scraping sessions"""

@@ -17,13 +17,14 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 class ScrapingService:
     def __init__(self):
         self.search_terms = [
-            'schade auto',
-            'lakschade',
-            'cosmetische schade',
-            'hagelschade',
-            'parkeerdeuk',
-            'beschadigde auto',
-            'lichte schade'
+            'zijschade auto',
+            'lakschade auto',
+            'cosmetische schade auto',
+            'hagelschade auto',
+            'deuk auto schade',
+            'bumper schade auto',
+            'aanrijdingsschade auto',
+            'plaatwerkschade auto',
         ]
 
     async def _scrape_with_scraper(self, scraper, website_name: str, search_terms: List[str] = None, max_pages: int = 3) -> Dict:
