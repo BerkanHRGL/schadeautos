@@ -5,28 +5,44 @@ from urllib.parse import urljoin
 from .base_scraper import BaseScraper
 import logging
 
+
 class SchadeautosScraper(BaseScraper):
     def __init__(self):
         super().__init__(use_selenium=True)
         self.base_url = "https://www.schadeautos.nl"
-        self.search_url = "https://www.schadeautos.nl/autos"
 
     async def scrape_search_results(self, search_terms: List[str], max_pages: int = 5) -> List[Dict]:
         all_cars = []
 
-        # This site is specifically for damaged cars, so we scrape all listings
-        for page in range(1, max_pages + 1):
-            page_url = f"{self.search_url}?pagina={page}"
-            html = await self.get_page(page_url)
-            if not html:
-                continue
+        # Scrape the main personenautos listing page
+        url = f"{self.base_url}/nl/schade/personenautos"
+        self.logger.info(f"Scraping {url}")
 
+        html = await self.get_page(url)
+        if html:
             cars = self.extract_car_data(html, self.base_url)
-            if not cars:
-                break
-
             all_cars.extend(cars)
-            self.logger.info(f"Found {len(cars)} cars on page {page}")
+            self.logger.info(f"Found {len(cars)} cars on main page")
+
+            # Try to click "load more" or scroll for more results via Selenium
+            if self.driver:
+                try:
+                    from selenium.webdriver.common.by import By
+                    import time
+
+                    # Scroll down to trigger lazy loading
+                    for _ in range(3):
+                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(2)
+
+                    # Get updated page source after scrolling
+                    updated_html = self.driver.page_source
+                    more_cars = self.extract_car_data(updated_html, self.base_url)
+                    if len(more_cars) > len(cars):
+                        all_cars = more_cars
+                        self.logger.info(f"Found {len(more_cars)} cars after scrolling")
+                except Exception as e:
+                    self.logger.error(f"Error during scroll loading: {e}")
 
         # Remove duplicates based on URL
         seen_urls = set()
@@ -42,15 +58,16 @@ class SchadeautosScraper(BaseScraper):
         soup = BeautifulSoup(html, 'html.parser')
         cars = []
 
-        # Find all car listing elements
-        listings = (soup.find_all('div', class_=re.compile(r'auto|car|vehicle|listing')) or
-                   soup.find_all('article') or
-                   soup.find_all('div', class_=re.compile(r'item|product')))
+        # SchadeAutos uses <a> tags linking to /nl/schade/personenautos/... with <h2> titles
+        # Find all links that point to individual car pages
+        car_links = soup.find_all('a', href=re.compile(r'/nl/schade/personenautos/.+/o/\d+'))
 
-        for listing in listings:
+        self.logger.info(f"Found {len(car_links)} car link elements")
+
+        for link in car_links:
             try:
-                car = self._extract_single_car(listing, base_url)
-                if car and self._is_cosmetic_damage_only(car):
+                car = self._extract_single_car(link, base_url)
+                if car:
                     cars.append(car)
             except Exception as e:
                 self.logger.error(f"Error extracting car data: {e}")
@@ -58,73 +75,99 @@ class SchadeautosScraper(BaseScraper):
 
         return cars
 
-    def _extract_single_car(self, listing, base_url: str) -> Optional[Dict]:
-        # Extract URL
-        link_elem = listing.find('a', href=True)
-        if not link_elem:
+    def _extract_single_car(self, link_elem, base_url: str) -> Optional[Dict]:
+        url = urljoin(base_url, link_elem.get('href', ''))
+        if not url:
             return None
 
-        url = urljoin(base_url, link_elem['href'])
+        # Get all text content
+        full_text = link_elem.get_text(separator=' ', strip=True)
+        if not full_text or len(full_text) < 5:
+            return None
 
-        # Extract title
-        title_elem = (listing.find('h1') or listing.find('h2') or listing.find('h3') or
-                     listing.find(class_=re.compile(r'title|name|heading')))
-        title = title_elem.get_text(strip=True) if title_elem else ""
+        # Extract title from <h2> tag
+        title_elem = link_elem.find('h2')
+        title = title_elem.get_text(strip=True) if title_elem else full_text.split('€')[0].strip()
 
-        # Extract price
-        price_elem = (listing.find(string=re.compile(r'€\s*\d')) or
-                     listing.find(class_=re.compile(r'price|prijs')))
+        # Extract price - look for € symbol
+        price = None
+        price_matches = re.findall(r'€\s*([\d.,]+)', full_text)
+        if price_matches:
+            # Take the first non-export price (usually the main/higher price)
+            for pm in price_matches:
+                p = self._parse_dutch_price(pm)
+                if p and p > 0:
+                    price = p
+                    break
 
-        if isinstance(price_elem, str):
-            price_text = price_elem
-        else:
-            price_text = price_elem.get_text(strip=True) if price_elem else ""
+        # Extract year from text (look for 4-digit year)
+        year = None
+        year_match = re.search(r'\b(19[89]\d|20[0-2]\d)\b', full_text)
+        if year_match:
+            year = int(year_match.group(1))
 
-        price = self.clean_price(price_text)
+        # Extract mileage
+        mileage = None
+        mileage_match = re.search(r'(\d{1,3}(?:[.,]\d{3})*)\s*(?:km|KM)', full_text)
+        if mileage_match:
+            mileage_text = mileage_match.group(1).replace('.', '').replace(',', '')
+            try:
+                mileage = int(mileage_text)
+            except ValueError:
+                pass
 
-        # Extract description
-        desc_elem = (listing.find('p') or
-                    listing.find(class_=re.compile(r'description|desc|summary')))
-        description = desc_elem.get_text(strip=True) if desc_elem else ""
+        # Extract fuel type
+        fuel_keywords = {'benzine': 'Benzine', 'diesel': 'Diesel', 'elektrisch': 'Elektrisch',
+                        'hybride': 'Hybride', 'lpg': 'LPG'}
+        fuel_type = None
+        text_lower = full_text.lower()
+        for key, value in fuel_keywords.items():
+            if key in text_lower:
+                fuel_type = value
+                break
 
         # Extract image
-        img_elem = listing.find('img')
+        img_elem = link_elem.find('img')
         image_url = None
         if img_elem:
-            image_url = img_elem.get('src') or img_elem.get('data-src') or img_elem.get('data-lazy')
+            image_url = img_elem.get('src') or img_elem.get('data-src')
             if image_url and not image_url.startswith('http'):
                 image_url = urljoin(base_url, image_url)
 
-        # Extract additional info
-        info_elements = listing.find_all(string=re.compile(r'\d{4}|\d+\s*km|km'))
-        additional_info = " ".join([elem.strip() for elem in info_elements])
-
-        # Parse car details
-        make, model, year, mileage = self._parse_car_details(title, description + " " + additional_info)
-
-        # Extract damage information
-        damage_keywords = self._extract_damage_keywords(title + " " + description)
+        # Parse make and model from title
+        make, model = self._parse_make_model(title)
 
         return {
             'url': url,
             'source_website': 'schadeautos.nl',
             'title': title,
-            'description': description,
+            'description': full_text,
             'price': price,
             'make': make,
             'model': model,
             'year': year,
             'mileage': mileage,
+            'fuel_type': fuel_type,
+            'location': '',
             'images': [image_url] if image_url else [],
-            'damage_keywords': damage_keywords,
-            'damage_description': description,
-            'has_cosmetic_damage_only': True
+            'damage_keywords': ['schade'],
+            'has_cosmetic_damage_only': True,
         }
 
-    def _parse_car_details(self, title: str, description: str) -> tuple:
-        text = (title + " " + description).lower()
+    def _parse_dutch_price(self, price_text: str) -> Optional[float]:
+        """Parse Dutch price format: 2.750 or 12.350"""
+        if not price_text:
+            return None
+        # Remove dots (thousand separators) and replace comma with dot for decimals
+        cleaned = price_text.replace('.', '').replace(',', '.')
+        cleaned = re.sub(r'[^\d.]', '', cleaned)
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
 
-        # Dutch car makes
+    def _parse_make_model(self, title: str) -> tuple:
+        """Extract make and model from title like 'Volkswagen Polo 1.0 TSI Highline'"""
         car_makes = {
             'volkswagen': 'Volkswagen', 'vw': 'Volkswagen', 'audi': 'Audi',
             'bmw': 'BMW', 'mercedes': 'Mercedes-Benz', 'mercedes-benz': 'Mercedes-Benz',
@@ -134,112 +177,28 @@ class SchadeautosScraper(BaseScraper):
             'hyundai': 'Hyundai', 'kia': 'Kia', 'volvo': 'Volvo',
             'seat': 'SEAT', 'skoda': 'Škoda', 'fiat': 'Fiat',
             'alfa romeo': 'Alfa Romeo', 'mini': 'MINI', 'smart': 'Smart',
-            'dacia': 'Dacia', 'suzuki': 'Suzuki', 'mitsubishi': 'Mitsubishi'
+            'dacia': 'Dacia', 'suzuki': 'Suzuki', 'mitsubishi': 'Mitsubishi',
+            'porsche': 'Porsche', 'tesla': 'Tesla', 'land rover': 'Land Rover',
+            'jaguar': 'Jaguar', 'jeep': 'Jeep', 'chrysler': 'Chrysler',
         }
 
+        title_lower = title.lower()
         make = None
-        for key, value in car_makes.items():
-            if key in text:
-                make = value
-                break
-
-        # Extract year
-        year_match = re.search(r'\b(19[8-9][0-9]|20[0-2][0-9])\b', text)
-        year = int(year_match.group(1)) if year_match else None
-
-        # Extract mileage (various formats)
-        mileage_patterns = [
-            r'(\d{1,3}(?:\.\d{3})*)\s*km',
-            r'(\d{1,3}(?:,\d{3})*)\s*km',
-            r'(\d{1,6})\s*km'
-        ]
-
-        mileage = None
-        for pattern in mileage_patterns:
-            mileage_match = re.search(pattern, text)
-            if mileage_match:
-                mileage = self.clean_mileage(mileage_match.group(1))
-                break
-
-        # Extract model (simplified approach)
         model = None
-        if make:
-            # Common model extraction patterns
-            model_patterns = [
-                rf'{make.lower()}\s+([a-z0-9\-\s]+?)(?:\s|$|\d{{4}})',
-                rf'{make.lower()}\s+([a-z0-9\-]+)',
-            ]
 
-            for pattern in model_patterns:
-                model_match = re.search(pattern, text, re.IGNORECASE)
-                if model_match:
-                    potential_model = model_match.group(1).strip()
-                    # Clean and validate model name
-                    if 2 <= len(potential_model) <= 15 and not potential_model.isdigit():
-                        model = potential_model.title()
-                        break
+        for key, value in car_makes.items():
+            if title_lower.startswith(key) or f' {key} ' in f' {title_lower} ':
+                make = value
+                # Try to extract model: word(s) after the make
+                after_make = title_lower.split(key, 1)[1].strip() if key in title_lower else ''
+                if after_make:
+                    # Model is usually the next word(s) before version numbers
+                    model_match = re.match(r'^([a-z0-9\-]+)', after_make)
+                    if model_match:
+                        model = model_match.group(1).title()
+                break
 
-        return make, model, year, mileage
-
-    def _extract_damage_keywords(self, text: str) -> List[str]:
-        damage_keywords = [
-            # Dutch cosmetic damage terms
-            'cosmetische schade', 'lichte schade', 'lakschade', 'deukjes', 'krassen',
-            'hagelschade', 'parkeerdeuk', 'kleine schade', 'bumperdeuk', 'krasjes',
-            'lakbeschadiging', 'oppervlakkige schade', 'kleine deuk', 'deuken',
-            'bumper schade', 'roest', 'verf schade', 'kleine reparatie',
-
-            # English cosmetic damage terms
-            'cosmetic damage', 'minor damage', 'paint damage', 'dent', 'scratch',
-            'scratches', 'dents', 'minor dent', 'small damage', 'surface damage',
-            'bumper damage', 'paint defect', 'rust',
-
-            # General damage terms
-            'schade', 'damage', 'beschadigd', 'damaged', 'reparatie', 'repair'
-        ]
-
-        found_keywords = []
-        text_lower = text.lower()
-
-        for keyword in damage_keywords:
-            if keyword in text_lower:
-                found_keywords.append(keyword)
-
-        return found_keywords
-
-    def _is_cosmetic_damage_only(self, car: Dict) -> bool:
-        # Filter for cosmetic damage only
-        severe_keywords = [
-            # Dutch severe damage terms
-            'motorschade', 'motor defect', 'versnellingsbak schade', 'transmissie schade',
-            'frame schade', 'chassis schade', 'water schade', 'brand schade',
-            'total loss', 'niet rijdend', 'rijdt niet', 'defect motor',
-            'kapotte motor', 'versnellingsbak kapot', 'airbag defect',
-
-            # English severe damage terms
-            'engine damage', 'gearbox damage', 'transmission damage',
-            'flood damage', 'fire damage', 'structural damage', 'frame damage',
-            'total loss', 'not running', 'engine failure', 'airbag deployed',
-            'salvage', 'write-off', 'accident damage'
-        ]
-
-        text = (car.get('title', '') + " " + car.get('description', '')).lower()
-
-        # Exclude severe damage
-        for keyword in severe_keywords:
-            if keyword in text:
-                return False
-
-        # Look for cosmetic damage indicators
-        cosmetic_indicators = [
-            'cosmetische', 'lichte', 'lakschade', 'deuk', 'kras', 'bumper',
-            'cosmetic', 'minor', 'paint', 'scratch', 'dent', 'surface'
-        ]
-
-        has_cosmetic_indicators = any(indicator in text for indicator in cosmetic_indicators)
-
-        # For damage car sites, we're more lenient but still need some indication it's cosmetic
-        return has_cosmetic_indicators or len(car.get('damage_keywords', [])) > 0
+        return make, model
 
     async def scrape_car_details(self, car_url: str) -> Optional[Dict]:
         html = await self.get_page(car_url)
@@ -251,71 +210,16 @@ class SchadeautosScraper(BaseScraper):
         try:
             details = {}
 
-            # Extract contact information
-            contact_info = {}
-
-            # Phone number
-            phone_elements = soup.find_all('a', href=re.compile(r'tel:'))
-            phones = [elem.get('href').replace('tel:', '') for elem in phone_elements]
-            if phones:
-                contact_info['phone'] = phones[0]
-
-            # Email
-            email_elements = soup.find_all('a', href=re.compile(r'mailto:'))
-            emails = [elem.get('href').replace('mailto:', '') for elem in email_elements]
-            if emails:
-                contact_info['email'] = emails[0]
-
-            details['contact_info'] = contact_info
-
-            # Additional images
+            # Extract all images
             img_elements = soup.find_all('img')
             images = []
             for img in img_elements:
-                src = img.get('src') or img.get('data-src') or img.get('data-lazy')
+                src = img.get('src') or img.get('data-src')
                 if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
                     if not src.startswith('http'):
                         src = urljoin(car_url, src)
                     images.append(src)
-
-            details['images'] = list(set(images))  # Remove duplicates
-
-            # Extract specifications table
-            specs = {}
-
-            # Look for specification tables or lists
-            spec_tables = soup.find_all('table')
-            for table in spec_tables:
-                rows = table.find_all('tr')
-                for row in rows:
-                    cells = row.find_all(['td', 'th'])
-                    if len(cells) == 2:
-                        key = cells[0].get_text(strip=True)
-                        value = cells[1].get_text(strip=True)
-                        if key and value:
-                            specs[key] = value
-
-            # Look for dt/dd pairs
-            dt_elements = soup.find_all('dt')
-            for dt in dt_elements:
-                dd = dt.find_next_sibling('dd')
-                if dd:
-                    key = dt.get_text(strip=True)
-                    value = dd.get_text(strip=True)
-                    specs[key] = value
-
-            details['specifications'] = specs
-
-            # Extract detailed description
-            desc_containers = soup.find_all(['div', 'section'], class_=re.compile(r'description|details|info'))
-            full_description = ""
-            for container in desc_containers:
-                text = container.get_text(strip=True)
-                if len(text) > len(full_description):
-                    full_description = text
-
-            if full_description:
-                details['detailed_description'] = full_description
+            details['images'] = list(set(images))
 
             return details
 
