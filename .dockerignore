@@ -1,0 +1,56 @@
+# Dependencies
+node_modules
+*/node_modules
+.npm
+.cache
+
+# Development files
+.git
+.gitignore
+*.md
+.env*
+!.env.example
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs
+
+# Build artifacts
+dist
+build
+.next
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache
+
+# Virtual environments
+.venv
+venv
+env
+*/venv
+backend/venv
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup and temp files
+*.bak
+*.tmp
+backup/

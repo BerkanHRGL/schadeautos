@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Car Damage Finder Test</title>
+</head>
+<body>
+    <h1>Car Damage Finder API Test</h1>
+    <div id="stats"></div>
+    <div id="cars"></div>
+
+    <script>
+        // Test API endpoints
+        fetch('/api/cars/stats/summary')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('stats').innerHTML = `
+                    <h2>Stats:</h2>
+                    <p>Total Cars: ${data.total_cars}</p>
+                    <p>Cosmetic Damage Only: ${data.cosmetic_damage_only}</p>
+                    <p>Average Price: €${data.average_price}</p>
+                    <p>Unique Makes: ${data.unique_makes}</p>
+                `;
+            })
+            .catch(error => console.error('Stats error:', error));
+
+        fetch('/api/cars?limit=5')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('cars').innerHTML = `
+                    <h2>Cars Found: ${data.length}</h2>
+                    <ul>
+                        ${data.map(car => `
+                            <li>${car.title} - €${car.price} (${car.damage_keywords ? car.damage_keywords.join(', ') : 'No damage keywords'})</li>
+                        `).join('')}
+                    </ul>
+                `;
+            })
+            .catch(error => console.error('Cars error:', error));
+    </script>
+</body>
+</html>

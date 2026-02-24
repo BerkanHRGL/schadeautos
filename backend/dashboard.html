@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Damage Finder - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .car-card { transition: transform 0.2s; }
+        .car-card:hover { transform: translateY(-2px); }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">Car Damage Finder</h1>
+            <p class="text-gray-600">Find cars with cosmetic damage at great prices under €10,000</p>
+        </div>
+
+        <!-- Live Scraping Notice -->
+        <div class="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
+            <div class="flex items-start">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <h3 class="text-sm font-medium text-green-800">Live Scraping Active</h3>
+                    <div class="mt-1 text-sm text-green-700">
+                        <p>Showing real car listings scraped from Marktplaats under €10,000 with damage keywords. The scraper runs automatically every 2 hours to find new listings.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div id="stats" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <!-- Stats will be loaded here -->
+        </div>
+
+        <!-- Filters -->
+        <div class="mb-6 bg-white rounded-lg shadow p-4">
+            <h3 class="font-semibold mb-4">Filters</h3>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Max Price</label>
+                    <input type="number" id="maxPrice" placeholder="€10000" class="w-full border rounded px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Max Mileage</label>
+                    <input type="number" id="maxMileage" placeholder="200000" class="w-full border rounded px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Car Make</label>
+                    <input type="text" id="make" placeholder="Volkswagen" class="w-full border rounded px-3 py-2">
+                </div>
+                <div>
+                    <button onclick="loadCars()" class="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 mt-6">
+                        Apply Filters
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cars Grid -->
+        <div id="cars-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <!-- Cars will be loaded here -->
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="text-center py-12 hidden">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p class="mt-4 text-gray-600">Loading cars...</p>
+        </div>
+
+        <!-- No Cars Message -->
+        <div id="no-cars" class="text-center py-12 hidden">
+            <svg class="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h2 class="text-xl font-semibold text-gray-900 mb-2">No Cars Found</h2>
+            <p class="text-gray-600 mb-4">The scraper is still working or no cars match your criteria. Try refreshing in a few minutes.</p>
+        </div>
+    </div>
+
+    <script>
+        // Load stats
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/cars/stats/summary');
+                const stats = await response.json();
+
+                document.getElementById('stats').innerHTML = `
+                    <div class="bg-white rounded-lg p-4 border border-gray-200">
+                        <div class="text-2xl font-bold text-blue-600">${stats.total_cars}</div>
+                        <div class="text-sm text-gray-600">Total Cars</div>
+                    </div>
+                    <div class="bg-white rounded-lg p-4 border border-gray-200">
+                        <div class="text-2xl font-bold text-green-600">${stats.cosmetic_damage_only}</div>
+                        <div class="text-sm text-gray-600">Cosmetic Only</div>
+                    </div>
+                    <div class="bg-white rounded-lg p-4 border border-gray-200">
+                        <div class="text-2xl font-bold text-purple-600">€${stats.average_price.toLocaleString()}</div>
+                        <div class="text-sm text-gray-600">Average Price</div>
+                    </div>
+                    <div class="bg-white rounded-lg p-4 border border-gray-200">
+                        <div class="text-2xl font-bold text-orange-600">${stats.unique_makes}</div>
+                        <div class="text-sm text-gray-600">Car Brands</div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Load cars
+        async function loadCars() {
+            const loading = document.getElementById('loading');
+            const carsGrid = document.getElementById('cars-grid');
+            const noCars = document.getElementById('no-cars');
+
+            loading.classList.remove('hidden');
+            carsGrid.classList.add('hidden');
+            noCars.classList.add('hidden');
+
+            try {
+                // Build query params
+                const params = new URLSearchParams();
+                params.append('limit', '20');
+                params.append('cosmetic_only', 'true');
+
+                if (document.getElementById('maxPrice').value) {
+                    params.append('max_price', document.getElementById('maxPrice').value);
+                }
+                if (document.getElementById('maxMileage').value) {
+                    params.append('max_mileage', document.getElementById('maxMileage').value);
+                }
+                if (document.getElementById('make').value) {
+                    params.append('make', document.getElementById('make').value);
+                }
+
+                const response = await fetch(`/api/cars?${params}`);
+                const cars = await response.json();
+
+                loading.classList.add('hidden');
+
+                if (cars.length === 0) {
+                    noCars.classList.remove('hidden');
+                    return;
+                }
+
+                carsGrid.classList.remove('hidden');
+                carsGrid.innerHTML = cars.map(car => `
+                    <div class="car-card bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg">
+                        <div class="h-48 bg-gray-200 flex items-center justify-center">
+                            ${car.images && car.images.length > 0 ?
+                                `<img src="${car.images[0]}" alt="${car.title}" class="w-full h-full object-cover" onerror="this.style.display='none'">` :
+                                '<span class="text-gray-500">No image available</span>'
+                            }
+                        </div>
+                        <div class="p-4">
+                            <h3 class="text-lg font-semibold text-gray-900 mb-2 line-clamp-2">
+                                ${car.title || `${car.make || ''} ${car.model || ''} (${car.year || 'Unknown'})`}
+                            </h3>
+                            <div class="space-y-2 mb-3">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-2xl font-bold text-green-600">
+                                        ${car.price ? `€${car.price.toLocaleString()}` : 'Contact seller'}
+                                    </span>
+                                    ${car.year ? `<span class="text-sm text-gray-500">${car.year}</span>` : ''}
+                                </div>
+                                <div class="flex items-center text-sm text-gray-600">
+                                    <span class="font-medium">${car.mileage ? `${car.mileage.toLocaleString()} km` : 'Unknown'}</span>
+                                    ${car.location ? `<span class="mx-2">•</span><span>${car.location}</span>` : ''}
+                                </div>
+                            </div>
+                            ${car.damage_keywords && car.damage_keywords.length > 0 ? `
+                                <div class="flex flex-wrap gap-1 mb-3">
+                                    ${car.damage_keywords.slice(0, 3).map(keyword =>
+                                        `<span class="bg-orange-100 text-orange-800 text-xs font-medium px-2 py-1 rounded">${keyword}</span>`
+                                    ).join('')}
+                                </div>
+                            ` : ''}
+                            <div class="flex justify-between items-center pt-3 border-t border-gray-100">
+                                <span class="text-xs text-gray-500">
+                                    ${car.source_website}
+                                </span>
+                                <div class="flex space-x-2">
+                                    <a href="${car.url}" target="_blank" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                        View Listing
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                console.error('Error loading cars:', error);
+                loading.classList.add('hidden');
+                noCars.classList.remove('hidden');
+            }
+        }
+
+        // Initialize page
+        window.addEventListener('load', () => {
+            loadStats();
+            loadCars();
+
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                loadStats();
+            }, 30000);
+        });
+    </script>
+</body>
+</html>
