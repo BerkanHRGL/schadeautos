@@ -7,8 +7,11 @@ from decouple import config
 import os
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import or_
-from database.database import engine
+from database.database import engine, Base
 from database.models import Car, User, UserPreference, Notification, ScrapingSession
+
+# Create all tables on startup
+Base.metadata.create_all(bind=engine)
 from scraping_service import ScrapingService
 from background_scheduler import start_scheduler, stop_scheduler
 from typing import List, Optional
