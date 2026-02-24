@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from fastapi.responses import FileResponse
@@ -16,6 +16,7 @@ from scraping_service import ScrapingService
 from background_scheduler import start_scheduler, stop_scheduler
 from typing import List, Optional
 from datetime import datetime
+import logging
 import atexit
 from api.routes import auth
 
@@ -193,15 +194,20 @@ async def get_car_stats(db = Depends(get_db)):
 
 # TODO: Implement proper preferences and notifications endpoints
 
-@app.post("/api/scraping/run")
-async def run_scraping():
-    """Manually trigger a scraping session"""
+def _run_scraping_task():
+    """Background task to run scraping"""
     try:
         service = ScrapingService()
         result = service.run_scraping_session()
-        return result
+        logging.getLogger(__name__).info(f"Scraping completed: {result}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.getLogger(__name__).error(f"Scraping failed: {e}")
+
+@app.post("/api/scraping/run")
+async def run_scraping(background_tasks: BackgroundTasks):
+    """Manually trigger a scraping session (runs in background)"""
+    background_tasks.add_task(_run_scraping_task)
+    return {"message": "Scraping started in background. Check /api/scraping/sessions for progress."}
 
 @app.get("/api/scraping/sessions")
 async def get_scraping_sessions(db = Depends(get_db)):

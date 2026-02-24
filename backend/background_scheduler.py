@@ -43,6 +43,11 @@ class BackgroundScheduler:
 
         def run_scheduler():
             logger.info("Background scheduler started")
+            # Run first scrape 2 minutes after startup
+            time.sleep(120)
+            if self.running:
+                logger.info("Running initial scrape after startup...")
+                self.run_scraping_job()
             while self.running:
                 schedule.run_pending()
                 time.sleep(60)  # Check every minute
