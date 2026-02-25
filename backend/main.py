@@ -88,6 +88,7 @@ async def get_cars(
     sort_by: str = Query("first_seen"),
     sort_order: str = Query("desc"),
     cosmetic_only: bool = Query(None),
+    min_deal_rating: str = Query(None, description="Minimum deal rating: excellent, good, fair, poor"),
     db = Depends(get_db)
 ):
     query = db.query(Car).filter(Car.is_active == True)
@@ -114,12 +115,20 @@ async def get_cars(
             Car.make.ilike(search_lower)
         )
 
+    if min_deal_rating:
+        deal_order = {"excellent": 4, "good": 3, "fair": 2, "poor": 1}
+        min_level = deal_order.get(min_deal_rating.lower(), 0)
+        if min_level > 0:
+            allowed_ratings = [r for r, lvl in deal_order.items() if lvl >= min_level]
+            query = query.filter(Car.deal_rating.in_(allowed_ratings))
+
     # Sorting
     sort_columns = {
         'first_seen': Car.first_seen,
         'price': Car.price,
         'mileage': Car.mileage,
         'year': Car.year,
+        'profit_percentage': Car.profit_percentage,
     }
     sort_col = sort_columns.get(sort_by, Car.first_seen)
     if sort_order == 'asc':

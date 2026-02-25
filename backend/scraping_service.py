@@ -4,6 +4,7 @@ from database.database import engine
 from database.models import Car, ScrapingSession
 from scrapers.marktplaats_scraper import MarktplaatsScraper
 from scrapers.schadeautos_scraper import SchadeautosScraper
+from market_price_service import MarketPriceService
 import logging
 from datetime import datetime
 from typing import List, Dict
@@ -199,6 +200,14 @@ class ScrapingService:
         total_found = sum(r.get('cars_found', 0) for r in results)
 
         logger.info(f"All scraping complete: {total_found} found, {total_added} added, {total_updated} updated")
+
+        # Update deal metrics with live market prices
+        try:
+            logger.info("=== Updating deal metrics with live market prices ===")
+            price_service = MarketPriceService()
+            await price_service.update_all_car_deal_metrics()
+        except Exception as e:
+            logger.error(f"Failed to update deal metrics: {e}")
 
         return {
             'success': all(r.get('success', False) for r in results),
