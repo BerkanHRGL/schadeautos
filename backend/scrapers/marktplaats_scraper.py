@@ -75,7 +75,7 @@ class MarktplaatsScraper(BaseScraper):
             search_url = (
                 f"{self.base_url}/l/auto-s/"
                 f"#q:{term.replace(' ', '+')}"
-                f"|PriceCentsTo:1500000"
+                f"|PriceCentsTo:600000"
                 f"|mileageTo:200001"
                 f"|constructionYearFrom:2010"
             )

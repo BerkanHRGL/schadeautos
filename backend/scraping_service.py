@@ -14,18 +14,35 @@ logger = logging.getLogger(__name__)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+MAX_PRICE = 6000  # Only include cars under €6000
+
+# Popular hatchbacks in the Netherlands
+TARGET_MODELS = [
+    # Budget/small hatchbacks
+    'volkswagen polo', 'volkswagen up',
+    'opel corsa', 'opel astra',
+    'renault clio', 'renault megane',
+    'peugeot 208', 'peugeot 107', 'peugeot 108', 'peugeot 308',
+    'ford fiesta', 'ford focus',
+    'toyota yaris', 'toyota aygo', 'toyota corolla',
+    'kia picanto', 'kia ceed',
+    'hyundai i10', 'hyundai i20', 'hyundai i30',
+    'fiat 500', 'fiat punto',
+    'citroen c1', 'citroen c3',
+    'seat ibiza', 'seat mii', 'seat leon',
+    'skoda fabia', 'skoda citigo', 'skoda octavia',
+    'suzuki swift',
+    'dacia sandero',
+    'mini cooper',
+    'honda jazz',
+    'mazda 2', 'mazda 3',
+]
+
+
 class ScrapingService:
     def __init__(self):
-        self.search_terms = [
-            'zijschade auto',
-            'lakschade auto',
-            'cosmetische schade auto',
-            'hagelschade auto',
-            'deuk auto schade',
-            'bumper schade auto',
-            'aanrijdingsschade auto',
-            'plaatwerkschade auto',
-        ]
+        # Generate search terms: each model + schade
+        self.search_terms = [f'{model} schade' for model in TARGET_MODELS]
 
     async def _scrape_with_scraper(self, scraper, website_name: str, search_terms: List[str] = None, max_pages: int = 3) -> Dict:
         """Run a single scraper and save results to database"""
@@ -59,6 +76,12 @@ class ScrapingService:
             # Process each scraped car
             for car_data in scraped_cars:
                 try:
+                    # Skip cars over max price
+                    price = car_data.get('price')
+                    if price is not None and price > MAX_PRICE:
+                        logger.debug(f"Skipped (price €{price} > €{MAX_PRICE}): {car_data.get('title')}")
+                        continue
+
                     existing_car = session.query(Car).filter_by(url=car_data.get('url')).first()
 
                     if existing_car:
