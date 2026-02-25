@@ -351,7 +351,7 @@ class MarktplaatsScraper(BaseScraper):
         self.logger.info(f"✅ Including: {candidate['title'][:50]} | damage: {damage_keywords[:3]} | {analysis['reason']}")
 
         # Parse car details from full text
-        make, model, year, mileage = self._parse_car_details(combined_text)
+        make, model, year, mileage = self._parse_car_details(combined_text, search_term)
 
         # Extract all images from the car page
         images = []
@@ -378,7 +378,7 @@ class MarktplaatsScraper(BaseScraper):
             'has_cosmetic_damage_only': True,
         }
 
-    def _parse_car_details(self, text: str) -> tuple:
+    def _parse_car_details(self, text: str, search_term: str = '') -> tuple:
         text_lower = text.lower()
 
         car_makes = {
@@ -395,9 +395,11 @@ class MarktplaatsScraper(BaseScraper):
         }
 
         make = None
+        make_key_found = None
         for key, value in car_makes.items():
             if key in text_lower:
                 make = value
+                make_key_found = key
                 break
 
         year_match = re.search(r'\b(20[0-2]\d|19[89]\d)\b', text)
@@ -408,7 +410,28 @@ class MarktplaatsScraper(BaseScraper):
         if mileage_match:
             mileage = self.clean_mileage(mileage_match.group(1))
 
+        # Extract model from text (word after make name)
         model = None
+        if make_key_found:
+            after_make = text_lower.split(make_key_found, 1)[1].strip()
+            if after_make:
+                model_match = re.match(r'^([a-z0-9\-]+)', after_make)
+                if model_match:
+                    candidate = model_match.group(1)
+                    # Skip noise words
+                    if candidate not in ('schade', 'met', 'auto', 'te', 'koop', 'de', 'met'):
+                        model = candidate.title()
+
+        # Fallback: extract model from search term (e.g. "volkswagen polo schade")
+        if not model and search_term:
+            term_lower = search_term.lower().replace(' schade', '')
+            for key in car_makes:
+                if term_lower.startswith(key):
+                    remainder = term_lower[len(key):].strip()
+                    if remainder:
+                        model = remainder.split()[0].title()
+                    break
+
         return make, model, year, mileage
 
     # Keep the abstract method signature compatible
