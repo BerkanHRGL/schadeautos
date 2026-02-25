@@ -68,9 +68,21 @@ class MarktplaatsScraper(BaseScraper):
 
     async def scrape_search_results(self, search_terms: List[str], max_pages: int = 3) -> List[Dict]:
         all_cars = []
+        # Track URLs already seen to skip duplicates early
+        seen_urls = set()
+        consecutive_crashes = 0
 
-        for term in search_terms:
-            self.logger.info(f"Searching Marktplaats for: {term}")
+        for i, term in enumerate(search_terms):
+            self.logger.info(f"[{i+1}/{len(search_terms)}] Searching Marktplaats for: {term}")
+
+            # Restart browser every 5 searches to prevent memory crashes
+            if i > 0 and i % 5 == 0:
+                try:
+                    await self.restart_browser()
+                    consecutive_crashes = 0
+                except Exception as e:
+                    self.logger.error(f"Failed to restart browser: {e}")
+                    break
 
             search_url = (
                 f"{self.base_url}/l/auto-s/"
@@ -83,7 +95,19 @@ class MarktplaatsScraper(BaseScraper):
             html = await self.get_page(search_url)
             if not html:
                 self.logger.warning(f"No HTML returned for term: {term}")
+                consecutive_crashes += 1
+                # If 3 crashes in a row, restart browser
+                if consecutive_crashes >= 3:
+                    self.logger.warning("3 consecutive crashes, restarting browser...")
+                    try:
+                        await self.restart_browser()
+                        consecutive_crashes = 0
+                    except Exception as e:
+                        self.logger.error(f"Failed to restart browser: {e}")
+                        break
                 continue
+
+            consecutive_crashes = 0
 
             # Wait for JS to render listings
             if self.driver:
@@ -101,6 +125,11 @@ class MarktplaatsScraper(BaseScraper):
 
             # Step 2: Visit each car page to read the FULL description
             for candidate in candidates:
+                # Skip if already processed this URL
+                if candidate['url'] in seen_urls:
+                    continue
+                seen_urls.add(candidate['url'])
+
                 try:
                     car = await self._fetch_full_car_details(candidate, term)
                     if car:

@@ -10,16 +10,24 @@ logger = logging.getLogger(__name__)
 class BackgroundScheduler:
     def __init__(self):
         self.running = False
+        self.scraping_in_progress = False
         self.thread = None
 
     def run_scraping_job(self):
         """Run the scraping job"""
+        if self.scraping_in_progress:
+            logger.warning("Scraping already in progress, skipping...")
+            return
+
+        self.scraping_in_progress = True
         logger.info("Starting scheduled scraping job...")
         try:
             result = run_scraping_sync()
             logger.info(f"Scraping job completed: {result}")
         except Exception as e:
             logger.error(f"Scraping job failed: {e}")
+        finally:
+            self.scraping_in_progress = False
 
     def setup_schedule(self):
         """Set up the scraping schedule"""
@@ -42,8 +50,8 @@ class BackgroundScheduler:
 
         def run_scheduler():
             logger.info("Background scheduler started")
-            # Run first scrape 2 minutes after startup
-            time.sleep(120)
+            # Run first scrape 5 minutes after startup
+            time.sleep(300)
             if self.running:
                 logger.info("Running initial scrape after startup...")
                 self.run_scraping_job()

@@ -10,7 +10,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-# from webdriver_manager.chrome import ChromeDriverManager
 import logging
 
 class BaseScraper(ABC):
@@ -36,11 +35,15 @@ class BaseScraper(ABC):
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument(f"--user-agent={self.user_agent.random}")
+        # Memory-saving options for Railway
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--js-flags=--max-old-space-size=256")
+        chrome_options.add_argument("--single-process")
         # Use system chromium
         chrome_options.binary_location = "/usr/bin/chromium"
 
         try:
-            # Try using system chromedriver first
             self.driver = webdriver.Chrome(
                 service=webdriver.chrome.service.Service("/usr/bin/chromedriver"),
                 options=chrome_options
@@ -48,6 +51,17 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"Failed to initialize Chrome driver: {e}")
             raise
+
+    async def restart_browser(self):
+        """Restart the browser to free memory"""
+        self.logger.info("Restarting browser to free memory...")
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
+            self.driver = None
+        await self._setup_selenium()
 
     async def _setup_session(self):
         headers = {
@@ -145,7 +159,7 @@ class BaseScraper(ABC):
 
         try:
             year = int(year_text)
-            if 1900 <= year <= 2024:
+            if 1900 <= year <= 2026:
                 return year
             return None
         except ValueError:
