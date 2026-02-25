@@ -33,11 +33,13 @@ GOOD_DAMAGE_KEYWORDS = [
     'dent', 'scratch', 'bumper damage', 'hail damage', 'body damage',
 ]
 
-# Severe damage keywords (what we want to EXCLUDE)
+# Severe damage - exact phrases that clearly indicate technical/unfixable damage
 SEVERE_DAMAGE_KEYWORDS = [
-    # Dutch - engine/mechanical
+    # Dutch - engine/mechanical (specific phrases only)
     'motorschade', 'motor defect', 'motor kapot', 'kapotte motor',
-    'versnellingsbak', 'transmissie', 'koppeling defect',
+    'motor is kapot', 'motor tikt', 'motor rammelt',
+    'versnellingsbak defect', 'versnellingsbak kapot',
+    'koppeling defect', 'koppeling kapot',
     'turbo defect', 'turbo kapot',
     # Dutch - structural
     'frame schade', 'chassis schade', 'constructie schade',
@@ -49,16 +51,86 @@ SEVERE_DAMAGE_KEYWORDS = [
     # Dutch - not drivable
     'niet rijdend', 'rijdt niet', 'niet rijdbaar', 'start niet',
     'spring niet aan',
-    # Dutch - airbag/crash
-    'airbag',
+    # Dutch - airbag specific (not just "airbag" alone)
+    'airbag afgegaan', 'airbag defect', 'airbag deployed', 'airbag eruit',
+    'airbags afgegaan', 'airbag geactiveerd',
     # Dutch - wreck
-    'autowrak', 'wrak', 'sloop',
+    'autowrak', 'sloop', 'sloopauto',
     # English equivalents
     'engine damage', 'engine failure', 'gearbox damage',
     'flood damage', 'fire damage', 'structural damage', 'frame damage',
     'total loss', 'write-off', 'salvage', 'not running',
-    'airbag deployed',
 ]
+
+# Technical problems that indicate the car is NOT just cosmetic damage
+# These are checked with context (surrounding words matter)
+TECHNICAL_PROBLEM_PHRASES = [
+    # Motor problems
+    'motor loopt niet', 'motor slaat niet aan', 'motor maakt geluid',
+    'motor rookt', 'olie lekt', 'koelvloeistof lekt',
+    # Gearbox problems
+    'schakelt niet', 'schakelproblemen', 'bak kraakt',
+    # Electrical
+    'elektrisch defect', 'storing motor', 'startmotor defect',
+    # Overheating
+    'oververhit', 'kop defect', 'cilinderkop',
+]
+
+
+def analyze_damage_text(text: str) -> dict:
+    """
+    Analyze car description to determine if damage is cosmetic or technical.
+    Returns: {'is_cosmetic': bool, 'reason': str, 'damage_types': list}
+    """
+    text_lower = text.lower()
+
+    # Check for severe/technical damage first
+    for keyword in SEVERE_DAMAGE_KEYWORDS:
+        if keyword in text_lower:
+            return {
+                'is_cosmetic': False,
+                'reason': f'Severe damage: {keyword}',
+                'damage_types': [keyword]
+            }
+
+    for phrase in TECHNICAL_PROBLEM_PHRASES:
+        if phrase in text_lower:
+            return {
+                'is_cosmetic': False,
+                'reason': f'Technical problem: {phrase}',
+                'damage_types': [phrase]
+            }
+
+    # Check for positive cosmetic damage indicators
+    cosmetic_found = []
+    for kw in GOOD_DAMAGE_KEYWORDS:
+        if kw in text_lower:
+            cosmetic_found.append(kw)
+
+    # Check context clues that suggest car drives fine
+    positive_signs = [
+        'technisch in orde', 'technisch goed', 'rijdt prima', 'rijdt goed',
+        'mechanisch in orde', 'mechanisch goed', 'loopt goed', 'loopt prima',
+        'motor loopt goed', 'motor is goed', 'geen technische',
+        'alleen cosmetisch', 'alleen optisch', 'alleen uiterlijk',
+        'schade is alleen', 'verder in goede staat',
+        'apk', 'nieuwe apk',  # has valid inspection
+    ]
+
+    has_positive = any(sign in text_lower for sign in positive_signs)
+
+    if cosmetic_found:
+        return {
+            'is_cosmetic': True,
+            'reason': 'Cosmetic damage found' + (' + drives well' if has_positive else ''),
+            'damage_types': cosmetic_found
+        }
+
+    return {
+        'is_cosmetic': False,
+        'reason': 'No damage keywords found',
+        'damage_types': []
+    }
 
 
 class MarktplaatsScraper(BaseScraper):
@@ -264,28 +336,19 @@ class MarktplaatsScraper(BaseScraper):
             full_description = ' '.join(texts)
 
         # Combine title + full description for damage analysis
-        combined_text = f"{candidate['title']} {full_description}".lower()
+        combined_text = f"{candidate['title']} {full_description}"
 
         self.logger.info(f"Full description length: {len(full_description)} chars")
 
-        # Check for severe damage - EXCLUDE
-        for keyword in SEVERE_DAMAGE_KEYWORDS:
-            if keyword in combined_text:
-                self.logger.info(f"Excluded (severe: '{keyword}'): {candidate['title'][:50]}")
-                return None
+        # Use smart damage analysis
+        analysis = analyze_damage_text(combined_text)
 
-        # Check for good damage keywords in the FULL text
-        damage_keywords = []
-        for kw in GOOD_DAMAGE_KEYWORDS:
-            if kw in combined_text:
-                damage_keywords.append(kw)
-
-        # Must have at least one damage keyword in title or full description
-        if not damage_keywords:
-            self.logger.info(f"Excluded (no damage keywords): {candidate['title'][:50]}")
+        if not analysis['is_cosmetic']:
+            self.logger.info(f"Excluded ({analysis['reason']}): {candidate['title'][:50]}")
             return None
 
-        self.logger.info(f"✅ Including: {candidate['title'][:50]} | damage: {damage_keywords[:3]}")
+        damage_keywords = analysis['damage_types']
+        self.logger.info(f"✅ Including: {candidate['title'][:50]} | damage: {damage_keywords[:3]} | {analysis['reason']}")
 
         # Parse car details from full text
         make, model, year, mileage = self._parse_car_details(combined_text)
