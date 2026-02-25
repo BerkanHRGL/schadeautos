@@ -77,7 +77,7 @@ class MarktplaatsScraper(BaseScraper):
                 f"#q:{term.replace(' ', '+')}"
                 f"|PriceCentsTo:600000"
                 f"|mileageTo:200001"
-                f"|constructionYearFrom:2010"
+                f"|constructionYearFrom:2014"
             )
 
             html = await self.get_page(search_url)

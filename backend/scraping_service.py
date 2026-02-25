@@ -82,6 +82,12 @@ class ScrapingService:
                         logger.debug(f"Skipped (price €{price} > €{MAX_PRICE}): {car_data.get('title')}")
                         continue
 
+                    # Skip cars older than 2014
+                    year = car_data.get('year')
+                    if year is not None and year < 2014:
+                        logger.debug(f"Skipped (year {year} < 2014): {car_data.get('title')}")
+                        continue
+
                     existing_car = session.query(Car).filter_by(url=car_data.get('url')).first()
 
                     if existing_car:
