@@ -85,6 +85,9 @@ async def get_cars(
     max_price: float = Query(None, ge=0),
     max_mileage: int = Query(None, ge=0),
     search: str = Query(None),
+    sort_by: str = Query("first_seen"),
+    sort_order: str = Query("desc"),
+    cosmetic_only: bool = Query(None),
     db = Depends(get_db)
 ):
     query = db.query(Car).filter(Car.is_active == True)
@@ -110,6 +113,19 @@ async def get_cars(
             Car.description.ilike(search_lower) |
             Car.make.ilike(search_lower)
         )
+
+    # Sorting
+    sort_columns = {
+        'first_seen': Car.first_seen,
+        'price': Car.price,
+        'mileage': Car.mileage,
+        'year': Car.year,
+    }
+    sort_col = sort_columns.get(sort_by, Car.first_seen)
+    if sort_order == 'asc':
+        query = query.order_by(sort_col.asc())
+    else:
+        query = query.order_by(sort_col.desc())
 
     cars = query.offset(skip).limit(limit).all()
 
