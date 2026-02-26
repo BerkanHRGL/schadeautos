@@ -4,7 +4,6 @@ from database.database import engine
 from database.models import Car, ScrapingSession
 from scrapers.marktplaats_scraper import MarktplaatsScraper
 from scrapers.schadeautos_scraper import SchadeautosScraper
-from market_price_service import MarketPriceService
 import logging
 from datetime import datetime
 from typing import List, Dict
@@ -14,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
-MAX_PRICE = 6000  # Only include cars under €6000
 
 # Popular hatchbacks in the Netherlands
 TARGET_MODELS = [
@@ -42,8 +39,7 @@ TARGET_MODELS = [
 
 class ScrapingService:
     def __init__(self):
-        # Generate search terms: each model + schade
-        self.search_terms = [f'{model} schade' for model in TARGET_MODELS]
+        self.search_terms = list(TARGET_MODELS)
 
     async def _scrape_with_scraper(self, scraper, website_name: str, search_terms: List[str] = None, max_pages: int = 3) -> Dict:
         """Run a single scraper and save results to database"""
@@ -77,12 +73,6 @@ class ScrapingService:
             # Process each scraped car
             for car_data in scraped_cars:
                 try:
-                    # Skip cars over max price
-                    price = car_data.get('price')
-                    if price is not None and price > MAX_PRICE:
-                        logger.debug(f"Skipped (price €{price} > €{MAX_PRICE}): {car_data.get('title')}")
-                        continue
-
                     # Skip cars older than 2014
                     year = car_data.get('year')
                     if year is not None and year < 2014:
@@ -200,14 +190,6 @@ class ScrapingService:
         total_found = sum(r.get('cars_found', 0) for r in results)
 
         logger.info(f"All scraping complete: {total_found} found, {total_added} added, {total_updated} updated")
-
-        # Update deal metrics with live market prices
-        try:
-            logger.info("=== Updating deal metrics with live market prices ===")
-            price_service = MarketPriceService()
-            await price_service.update_all_car_deal_metrics()
-        except Exception as e:
-            logger.error(f"Failed to update deal metrics: {e}")
 
         return {
             'success': all(r.get('success', False) for r in results),

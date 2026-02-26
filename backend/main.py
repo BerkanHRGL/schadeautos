@@ -95,7 +95,7 @@ async def get_cars(
 
     # Filter out cars with more than 200,000 km
     query = query.filter(
-        or_(Car.mileage == None, Car.mileage <= 200000)
+        or_(Car.mileage == None, Car.mileage <= 180000)
     )
 
     if min_price is not None:
@@ -169,7 +169,7 @@ async def get_cars(
 async def get_car(car_id: int, db = Depends(get_db)):
     car = db.query(Car).filter(
         Car.id == car_id,
-        or_(Car.mileage == None, Car.mileage <= 200000)
+        or_(Car.mileage == None, Car.mileage <= 180000)
     ).first()
     if not car:
         raise HTTPException(status_code=404, detail="Car not found")
@@ -200,7 +200,7 @@ async def get_car(car_id: int, db = Depends(get_db)):
 async def get_car_stats(db = Depends(get_db)):
     cars = db.query(Car).filter(
         Car.is_active == True,
-        or_(Car.mileage == None, Car.mileage <= 200000)
+        or_(Car.mileage == None, Car.mileage <= 180000)
     ).all()
 
     total_cars = len(cars)
