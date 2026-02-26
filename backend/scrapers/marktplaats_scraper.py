@@ -10,7 +10,7 @@ import logging
 
 # Year range to search
 MIN_YEAR = 2014
-MAX_YEAR = datetime.now().year
+MAX_YEAR = 2019
 
 
 class MarktplaatsScraper(BaseScraper):
