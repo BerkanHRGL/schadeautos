@@ -1,11 +1,16 @@
 import re
 import time
 import statistics
+from datetime import datetime
 from typing import List, Dict, Optional
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from .base_scraper import BaseScraper
 import logging
+
+# Year range to search
+MIN_YEAR = 2014
+MAX_YEAR = datetime.now().year
 
 
 class MarktplaatsScraper(BaseScraper):
@@ -17,124 +22,128 @@ class MarktplaatsScraper(BaseScraper):
         all_cars = []
         seen_urls = set()
         consecutive_crashes = 0
+        search_count = 0
 
-        for i, term in enumerate(search_terms):
-            self.logger.info(f"[{i+1}/{len(search_terms)}] Searching Marktplaats for: {term}")
+        for term in search_terms:
+            for year in range(MIN_YEAR, MAX_YEAR + 1):
+                search_count += 1
+                self.logger.info(f"[{search_count}] Searching: {term} ({year})")
 
-            # Restart browser every 5 searches to prevent memory crashes
-            if i > 0 and i % 5 == 0:
-                try:
-                    await self.restart_browser()
-                    consecutive_crashes = 0
-                except Exception as e:
-                    self.logger.error(f"Failed to restart browser: {e}")
-                    break
-
-            search_url = (
-                f"{self.base_url}/l/auto-s/"
-                f"#q:{term.replace(' ', '+')}"
-                f"|mileageTo:180001"
-                f"|constructionYearFrom:2014"
-            )
-
-            html = await self.get_page(search_url)
-            if not html:
-                self.logger.warning(f"No HTML returned for term: {term}")
-                consecutive_crashes += 1
-                if consecutive_crashes >= 3:
-                    self.logger.warning("3 consecutive crashes, restarting browser...")
+                # Restart browser every 10 searches to prevent memory crashes
+                if search_count > 1 and search_count % 10 == 0:
                     try:
                         await self.restart_browser()
                         consecutive_crashes = 0
                     except Exception as e:
                         self.logger.error(f"Failed to restart browser: {e}")
                         break
-                continue
 
-            consecutive_crashes = 0
-
-            # Wait for JS to render listings
-            if self.driver:
-                try:
-                    time.sleep(3)
-                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                    time.sleep(2)
-                    html = self.driver.page_source
-                except Exception as e:
-                    self.logger.error(f"Error during page interaction: {e}")
-
-            # Extract all car listings from search results
-            candidates = self._extract_car_urls(html, self.base_url)
-            self.logger.info(f"Found {len(candidates)} car listings for term '{term}'")
-
-            # Collect valid prices (> €500) for median calculation
-            valid_prices = [c['price'] for c in candidates if c.get('price') and c['price'] > 500]
-
-            if len(valid_prices) < 3:
-                self.logger.warning(f"Not enough prices ({len(valid_prices)}) to calculate median for '{term}', skipping")
-                continue
-
-            median_price = statistics.median(valid_prices)
-            threshold = median_price * 0.70  # 30% below median
-            self.logger.info(f"Median price for '{term}': €{median_price:.0f}, threshold (70%): €{threshold:.0f}")
-
-            # Only keep cars priced ≥30% below median
-            for candidate in candidates:
-                url = candidate.get('url')
-                price = candidate.get('price')
-
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-
-                if not price or price <= 500:
-                    continue
-
-                if price > threshold:
-                    continue
-
-                # Calculate deal metrics
-                profit_percentage = ((median_price - price) / median_price) * 100
-
-                if profit_percentage >= 50:
-                    deal_rating = "excellent"
-                elif profit_percentage >= 30:
-                    deal_rating = "good"
-                else:
-                    deal_rating = "fair"
-
-                # Parse car details from title
-                make, model, year, mileage = self._parse_car_details(candidate.get('title', ''), term)
-
-                images = []
-                if candidate.get('image_url'):
-                    images.append(candidate['image_url'])
-
-                car = {
-                    'url': url,
-                    'source_website': 'marktplaats.nl',
-                    'title': candidate.get('title', ''),
-                    'description': '',
-                    'price': price,
-                    'make': make,
-                    'model': model,
-                    'year': year,
-                    'mileage': mileage,
-                    'location': candidate.get('location', ''),
-                    'images': images,
-                    'damage_keywords': [],
-                    'has_cosmetic_damage_only': True,
-                    'market_price': median_price,
-                    'profit_percentage': round(profit_percentage, 1),
-                    'deal_rating': deal_rating,
-                }
-
-                self.logger.info(
-                    f"Deal found: {candidate.get('title', '')[:50]} | "
-                    f"€{price:.0f} vs median €{median_price:.0f} | "
-                    f"{profit_percentage:.0f}% below | {deal_rating}"
+                search_url = (
+                    f"{self.base_url}/l/auto-s/"
+                    f"#q:{term.replace(' ', '+')}"
+                    f"|constructionYearFrom:{year}"
+                    f"|constructionYearTo:{year}"
+                    f"|mileageTo:180001"
                 )
-                all_cars.append(car)
+
+                html = await self.get_page(search_url)
+                if not html:
+                    self.logger.warning(f"No HTML returned for: {term} ({year})")
+                    consecutive_crashes += 1
+                    if consecutive_crashes >= 3:
+                        self.logger.warning("3 consecutive crashes, restarting browser...")
+                        try:
+                            await self.restart_browser()
+                            consecutive_crashes = 0
+                        except Exception as e:
+                            self.logger.error(f"Failed to restart browser: {e}")
+                            break
+                    continue
+
+                consecutive_crashes = 0
+
+                # Wait for JS to render listings
+                if self.driver:
+                    try:
+                        time.sleep(3)
+                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(2)
+                        html = self.driver.page_source
+                    except Exception as e:
+                        self.logger.error(f"Error during page interaction: {e}")
+
+                # Extract all car listings from search results
+                candidates = self._extract_car_urls(html, self.base_url)
+                self.logger.info(f"Found {len(candidates)} listings for '{term}' ({year})")
+
+                # Collect valid prices (> €500) for median calculation
+                valid_prices = [c['price'] for c in candidates if c.get('price') and c['price'] > 500]
+
+                if len(valid_prices) < 3:
+                    self.logger.warning(f"Not enough prices ({len(valid_prices)}) for '{term}' ({year}), skipping")
+                    continue
+
+                median_price = statistics.median(valid_prices)
+                threshold = median_price * 0.70  # 30% below median
+                self.logger.info(f"Median for '{term}' ({year}): €{median_price:.0f}, threshold: €{threshold:.0f}")
+
+                # Only keep cars priced ≥30% below median
+                for candidate in candidates:
+                    url = candidate.get('url')
+                    price = candidate.get('price')
+
+                    if not url or url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+
+                    if not price or price <= 500:
+                        continue
+
+                    if price > threshold:
+                        continue
+
+                    profit_percentage = ((median_price - price) / median_price) * 100
+
+                    if profit_percentage >= 50:
+                        deal_rating = "excellent"
+                    elif profit_percentage >= 30:
+                        deal_rating = "good"
+                    else:
+                        deal_rating = "fair"
+
+                    make, model_name, parsed_year, mileage = self._parse_car_details(
+                        candidate.get('title', ''), term
+                    )
+
+                    images = []
+                    if candidate.get('image_url'):
+                        images.append(candidate['image_url'])
+
+                    car = {
+                        'url': url,
+                        'source_website': 'marktplaats.nl',
+                        'title': candidate.get('title', ''),
+                        'description': '',
+                        'price': price,
+                        'make': make,
+                        'model': model_name,
+                        'year': parsed_year or year,
+                        'mileage': mileage,
+                        'location': candidate.get('location', ''),
+                        'images': images,
+                        'damage_keywords': [],
+                        'has_cosmetic_damage_only': True,
+                        'market_price': median_price,
+                        'profit_percentage': round(profit_percentage, 1),
+                        'deal_rating': deal_rating,
+                    }
+
+                    self.logger.info(
+                        f"Deal: {candidate.get('title', '')[:50]} | "
+                        f"€{price:.0f} vs median €{median_price:.0f} ({year}) | "
+                        f"{profit_percentage:.0f}% below | {deal_rating}"
+                    )
+                    all_cars.append(car)
 
         self.logger.info(f"Total below-market cars from Marktplaats: {len(all_cars)}")
         return all_cars
