@@ -84,14 +84,15 @@ class MarktplaatsScraper(BaseScraper):
                 candidates = self._extract_car_urls(html, self.base_url)
                 self.logger.info(f"Found {len(candidates)} listings for '{term}' ({year})")
 
-                # Collect valid prices (> €500) for median calculation
-                valid_prices = [c['price'] for c in candidates if c.get('price') and c['price'] > 500]
+                # Collect valid prices (> €500), sort low to high, take median of 7 cheapest
+                valid_prices = sorted([c['price'] for c in candidates if c.get('price') and c['price'] > 500])
 
                 if len(valid_prices) < 3:
                     self.logger.warning(f"Not enough prices ({len(valid_prices)}) for '{term}' ({year}), skipping")
                     continue
 
-                median_price = statistics.median(valid_prices)
+                cheapest_7 = valid_prices[:7]
+                median_price = statistics.median(cheapest_7)
                 threshold = median_price * 0.70  # 30% below median
                 self.logger.info(f"Median for '{term}' ({year}): €{median_price:.0f}, threshold: €{threshold:.0f}")
 
