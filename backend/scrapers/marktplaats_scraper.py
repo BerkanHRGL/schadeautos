@@ -46,6 +46,14 @@ class MarktplaatsScraper(BaseScraper):
                     f"|mileageTo:180001"
                 )
 
+                # Navigate away first to force full reload (hash-only changes don't reload)
+                if self.driver:
+                    try:
+                        self.driver.get("about:blank")
+                        time.sleep(0.5)
+                    except Exception:
+                        pass
+
                 html = await self.get_page(search_url)
                 if not html:
                     self.logger.warning(f"No HTML returned for: {term} ({year})")
