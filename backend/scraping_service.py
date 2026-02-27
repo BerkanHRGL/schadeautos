@@ -171,13 +171,13 @@ class ScrapingService:
             logger.error(f"Marktplaats scraper failed: {e}")
             results.append({'website': 'marktplaats.nl', 'success': False, 'error': str(e)})
 
-        # Scrape schadeautos.nl
+        # Scrape schadeautos.nl - same TARGET_MODELS list as Marktplaats
         try:
             logger.info("=== Starting SchadeAutos scraper ===")
             schadeautos = SchadeautosScraper()
             result = await self._scrape_with_scraper(
                 schadeautos, 'schadeautos.nl',
-                search_terms=[],
+                search_terms=self.search_terms,
                 max_pages=5
             )
             results.append(result)
