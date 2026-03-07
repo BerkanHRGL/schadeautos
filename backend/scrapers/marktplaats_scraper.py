@@ -1,5 +1,6 @@
 import re
 import time
+import asyncio
 import statistics
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -23,6 +24,7 @@ class MarktplaatsScraper(BaseScraper):
         seen_urls = set()
         consecutive_crashes = 0
         search_count = 0
+        backoff_seconds = 0
 
         for term in search_terms:
             for year in range(MIN_YEAR, MAX_YEAR + 1):
@@ -54,21 +56,28 @@ class MarktplaatsScraper(BaseScraper):
                     except Exception:
                         pass
 
+                if backoff_seconds > 0:
+                    self.logger.info(f"Backing off {backoff_seconds}s before next request...")
+                    await asyncio.sleep(backoff_seconds)
+
                 html = await self.get_page(search_url)
                 if not html:
                     self.logger.warning(f"No HTML returned for: {term} ({year})")
                     consecutive_crashes += 1
+                    backoff_seconds = min(60, 10 * consecutive_crashes)
                     if consecutive_crashes >= 3:
                         self.logger.warning("3 consecutive crashes, restarting browser...")
                         try:
                             await self.restart_browser()
                             consecutive_crashes = 0
+                            backoff_seconds = 60  # Long pause after browser restart
                         except Exception as e:
                             self.logger.error(f"Failed to restart browser: {e}")
                             break
                     continue
 
                 consecutive_crashes = 0
+                backoff_seconds = 0
 
                 # Wait for JS to render listings
                 if self.driver:

@@ -48,6 +48,7 @@ class BaseScraper(ABC):
                 service=webdriver.chrome.service.Service("/usr/bin/chromedriver"),
                 options=chrome_options
             )
+            self.driver.set_page_load_timeout(30)
         except Exception as e:
             self.logger.error(f"Failed to initialize Chrome driver: {e}")
             raise
