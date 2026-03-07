@@ -62,6 +62,7 @@ export const notificationsAPI = {
 export const scrapingAPI = {
   runScraper: () => api.post('/scraping/run'),
   getSessions: () => api.get('/scraping/sessions'),
+  getProgress: () => api.get('/scraping/progress'),
 };
 
 export default api;

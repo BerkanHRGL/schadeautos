@@ -219,20 +219,47 @@ async def get_car_stats(db = Depends(get_db)):
 
 # TODO: Implement proper preferences and notifications endpoints
 
+scraping_progress = {
+    "is_running": False,
+    "current": 0,
+    "total": 0,
+    "current_label": "",
+    "website": "",
+}
+
 async def _run_scraping_task():
     """Background task to run scraping"""
+    global scraping_progress
+    scraping_progress["is_running"] = True
+    scraping_progress["current"] = 0
+    scraping_progress["total"] = 0
+    scraping_progress["current_label"] = ""
     try:
         service = ScrapingService()
-        result = await service.run_scraping_session()
+
+        def on_progress(current, total, label, website):
+            scraping_progress["current"] = current
+            scraping_progress["total"] = total
+            scraping_progress["current_label"] = label
+            scraping_progress["website"] = website
+
+        result = await service.run_scraping_session(on_progress=on_progress)
         logging.getLogger(__name__).info(f"Scraping completed: {result}")
     except Exception as e:
         logging.getLogger(__name__).error(f"Scraping failed: {e}")
+    finally:
+        scraping_progress["is_running"] = False
 
 @app.post("/api/scraping/run")
 async def run_scraping(background_tasks: BackgroundTasks):
     """Manually trigger a scraping session (runs in background)"""
     background_tasks.add_task(_run_scraping_task)
     return {"message": "Scraping started in background. Check /api/scraping/sessions for progress."}
+
+@app.get("/api/scraping/progress")
+async def get_scraping_progress():
+    """Get live scraping progress"""
+    return scraping_progress
 
 @app.delete("/api/cars/clear")
 async def clear_all_cars(db = Depends(get_db)):

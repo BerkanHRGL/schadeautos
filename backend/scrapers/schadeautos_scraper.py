@@ -31,14 +31,17 @@ class SchadeautosScraper(BaseScraper):
         super().__init__(use_selenium=True)
         self.base_url = "https://www.schadeautos.nl"
 
-    async def scrape_search_results(self, search_terms: List[str], max_pages: int = 5, on_car_found=None) -> List[Dict]:
+    async def scrape_search_results(self, search_terms: List[str], max_pages: int = 5, on_car_found=None, on_progress=None, website_name: str = 'schadeautos.nl') -> List[Dict]:
         all_cars = []
         seen_urls = set()
         search_count = 0
+        total_searches = len(search_terms)
 
         for term in search_terms:
             search_count += 1
             self.logger.info(f"[{search_count}] Searching schadeautos.nl: {term}")
+            if on_progress:
+                on_progress(search_count, total_searches, term, website_name)
 
             # Restart browser every 10 searches to prevent memory crashes
             if search_count > 1 and search_count % 10 == 0:

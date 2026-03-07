@@ -81,7 +81,7 @@ class ScrapingService:
             session.commit()
             return 'added'
 
-    async def _scrape_with_scraper(self, scraper, website_name: str, search_terms: List[str] = None, max_pages: int = 3) -> Dict:
+    async def _scrape_with_scraper(self, scraper, website_name: str, search_terms: List[str] = None, max_pages: int = 3, on_progress=None) -> Dict:
         """Run a single scraper and save results to database in real-time"""
         session = SessionLocal()
         cars_added = 0
@@ -118,6 +118,8 @@ class ScrapingService:
                 search_terms=search_terms or [],
                 max_pages=max_pages,
                 on_car_found=on_car_found,
+                on_progress=on_progress,
+                website_name=website_name,
             )
 
             scraping_session.completed_at = datetime.utcnow()
@@ -154,7 +156,7 @@ class ScrapingService:
             await scraper.close()
             session.close()
 
-    async def run_scraping_session(self) -> Dict:
+    async def run_scraping_session(self, on_progress=None) -> Dict:
         """Run scraping across all sources"""
         results = []
 
@@ -165,7 +167,8 @@ class ScrapingService:
             result = await self._scrape_with_scraper(
                 marktplaats, 'marktplaats.nl',
                 search_terms=self.search_terms,
-                max_pages=3
+                max_pages=3,
+                on_progress=on_progress,
             )
             results.append(result)
         except Exception as e:
@@ -179,7 +182,8 @@ class ScrapingService:
             result = await self._scrape_with_scraper(
                 schadeautos, 'schadeautos.nl',
                 search_terms=self.search_terms,
-                max_pages=5
+                max_pages=5,
+                on_progress=on_progress,
             )
             results.append(result)
         except Exception as e:

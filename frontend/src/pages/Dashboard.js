@@ -36,15 +36,25 @@ const Dashboard = () => {
     }
   );
 
+  const { data: progress } = useQuery(
+    'scrapingProgress',
+    () => scrapingAPI.getProgress().then(res => res.data),
+    {
+      refetchInterval: (data) => (data?.is_running ? 2000 : false),
+    }
+  );
+
   const runScraperMutation = useMutation(scrapingAPI.runScraper, {
     onSuccess: () => {
       setScraperOpen(true);
       queryClient.invalidateQueries('scrapingSessions');
+      queryClient.invalidateQueries('scrapingProgress');
     },
   });
 
-  const isScraperRunning = sessions?.some(s => s.status === 'running');
+  const isScraperRunning = sessions?.some(s => s.status === 'running') || progress?.is_running;
   const latestSession = sessions?.[0];
+  const progressPct = progress?.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
 
   // Build query params
   const queryParams = useMemo(() => {
@@ -175,6 +185,22 @@ const Dashboard = () => {
                   </button>
                 </div>
               </div>
+
+              {isScraperRunning && progress?.total > 0 && (
+                <div className="border-t border-gray-100 bg-gray-50 px-4 py-3">
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                    <span className="truncate max-w-xs">{progress.website} — {progress.current_label}</span>
+                    <span className="ml-2 font-medium text-gray-700">{progressPct}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-500 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${progressPct}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">{progress.current} / {progress.total} searches</div>
+                </div>
+              )}
 
               {scraperOpen && sessions?.length > 0 && (
                 <div className="border-t border-gray-100 bg-gray-50 px-4 py-3 space-y-2">

@@ -19,17 +19,20 @@ class MarktplaatsScraper(BaseScraper):
         super().__init__(use_selenium=True)
         self.base_url = "https://www.marktplaats.nl"
 
-    async def scrape_search_results(self, search_terms: List[str], max_pages: int = 3, on_car_found=None) -> List[Dict]:
+    async def scrape_search_results(self, search_terms: List[str], max_pages: int = 3, on_car_found=None, on_progress=None, website_name: str = 'marktplaats.nl') -> List[Dict]:
         all_cars = []
         seen_urls = set()
         consecutive_crashes = 0
         search_count = 0
         backoff_seconds = 0
+        total_searches = len(search_terms) * (MAX_YEAR - MIN_YEAR + 1)
 
         for term in search_terms:
             for year in range(MIN_YEAR, MAX_YEAR + 1):
                 search_count += 1
                 self.logger.info(f"[{search_count}] Searching: {term} ({year})")
+                if on_progress:
+                    on_progress(search_count, total_searches, f"{term} ({year})", website_name)
 
                 # Restart browser every 10 searches to prevent memory crashes
                 if search_count > 1 and search_count % 10 == 0:
