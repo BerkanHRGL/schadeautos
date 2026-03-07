@@ -175,6 +175,9 @@ class ScrapingService:
             logger.error(f"Marktplaats scraper failed: {e}")
             results.append({'website': 'marktplaats.nl', 'success': False, 'error': str(e)})
 
+        # Brief pause to let memory recover after Marktplaats run
+        await asyncio.sleep(15)
+
         # Scrape schadeautos.nl - same TARGET_MODELS list as Marktplaats
         try:
             logger.info("=== Starting SchadeAutos scraper ===")
