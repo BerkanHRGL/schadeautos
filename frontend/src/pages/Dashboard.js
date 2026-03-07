@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { useQuery } from 'react-query';
-import { carsAPI } from '../services/api';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { carsAPI, scrapingAPI } from '../services/api';
 import CarCard from '../components/CarCard';
 import FilterPanel from '../components/FilterPanel';
 import { ChevronUpDownIcon, Bars3Icon } from '@heroicons/react/24/outline';
@@ -22,6 +22,29 @@ const Dashboard = () => {
   });
 
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [scraperOpen, setScraperOpen] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: sessions } = useQuery(
+    'scrapingSessions',
+    () => scrapingAPI.getSessions().then(res => res.data),
+    {
+      refetchInterval: (data) => {
+        const isRunning = data?.some(s => s.status === 'running');
+        return isRunning ? 3000 : false;
+      },
+    }
+  );
+
+  const runScraperMutation = useMutation(scrapingAPI.runScraper, {
+    onSuccess: () => {
+      setScraperOpen(true);
+      queryClient.invalidateQueries('scrapingSessions');
+    },
+  });
+
+  const isScraperRunning = sessions?.some(s => s.status === 'running');
+  const latestSession = sessions?.[0];
 
   // Build query params
   const queryParams = useMemo(() => {
@@ -116,26 +139,72 @@ const Dashboard = () => {
               )}
             </div>
 
-            {/* Live Scraping Notice */}
-            <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
-              <div className="flex items-start">
-                <div className="flex-shrink-0">
-                  <svg className="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
+            {/* Scraper Panel */}
+            <div className="mb-6 border border-gray-200 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 bg-white">
+                <div className="flex items-center space-x-3">
+                  <div className={`w-2.5 h-2.5 rounded-full ${isScraperRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+                  <span className="text-sm font-medium text-gray-700">
+                    {isScraperRunning ? 'Scraper running...' : 'Scraper idle'}
+                  </span>
+                  {latestSession && !isScraperRunning && latestSession.completed_at && (
+                    <span className="text-xs text-gray-400">
+                      Last run: {new Date(latestSession.completed_at).toLocaleString()}
+                    </span>
+                  )}
                 </div>
-                <div className="ml-3">
-                  <h3 className="text-sm font-medium text-green-800">
-                    Live Scraping Active
-                  </h3>
-                  <div className="mt-1 text-sm text-green-700">
-                    <p>
-                      Showing real car listings scraped from Marktplaats under €10,000 with damage keywords.
-                      The scraper runs automatically every 2 hours to find new listings.
-                    </p>
-                  </div>
+                <div className="flex items-center space-x-2">
+                  {sessions?.length > 0 && (
+                    <button
+                      onClick={() => setScraperOpen(o => !o)}
+                      className="text-xs text-gray-500 hover:text-gray-700"
+                    >
+                      {scraperOpen ? 'Hide details' : 'Show details'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => runScraperMutation.mutate()}
+                    disabled={isScraperRunning || runScraperMutation.isLoading}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      isScraperRunning || runScraperMutation.isLoading
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    {isScraperRunning ? 'Running...' : 'Run Scraper'}
+                  </button>
                 </div>
               </div>
+
+              {scraperOpen && sessions?.length > 0 && (
+                <div className="border-t border-gray-100 bg-gray-50 px-4 py-3 space-y-2">
+                  {sessions.slice(0, 5).map(session => (
+                    <div key={session.id} className="flex items-center justify-between text-sm">
+                      <div className="flex items-center space-x-2">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                          session.status === 'running' ? 'bg-green-100 text-green-700' :
+                          session.status === 'completed' ? 'bg-blue-100 text-blue-700' :
+                          'bg-red-100 text-red-700'
+                        }`}>
+                          {session.status}
+                        </span>
+                        <span className="text-gray-600">{session.website}</span>
+                        <span className="text-gray-400 text-xs">
+                          {new Date(session.started_at).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-3 text-gray-500 text-xs">
+                        <span>{session.cars_found} found</span>
+                        <span className="text-green-600 font-medium">{session.cars_added} added</span>
+                        {session.cars_updated > 0 && <span>{session.cars_updated} updated</span>}
+                        {session.error_message && (
+                          <span className="text-red-500">Error</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Stats */}

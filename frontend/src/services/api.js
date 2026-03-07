@@ -58,4 +58,10 @@ export const notificationsAPI = {
   getUnreadCount: () => api.get('/notifications/unread-count'),
 };
 
+// Scraping endpoints
+export const scrapingAPI = {
+  runScraper: () => api.post('/scraping/run'),
+  getSessions: () => api.get('/scraping/sessions'),
+};
+
 export default api;
