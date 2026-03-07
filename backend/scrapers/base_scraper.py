@@ -38,8 +38,8 @@ class BaseScraper(ABC):
         # Memory-saving options for Railway
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--js-flags=--max-old-space-size=256")
-        chrome_options.add_argument("--single-process")
+        chrome_options.add_argument("--disable-setuid-sandbox")
+        chrome_options.add_argument("--remote-debugging-port=0")
         # Use system chromium
         chrome_options.binary_location = "/usr/bin/chromium"
 
