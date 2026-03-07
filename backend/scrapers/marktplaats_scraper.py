@@ -19,7 +19,7 @@ class MarktplaatsScraper(BaseScraper):
         super().__init__(use_selenium=True)
         self.base_url = "https://www.marktplaats.nl"
 
-    async def scrape_search_results(self, search_terms: List[str], max_pages: int = 3) -> List[Dict]:
+    async def scrape_search_results(self, search_terms: List[str], max_pages: int = 3, on_car_found=None) -> List[Dict]:
         all_cars = []
         seen_urls = set()
         consecutive_crashes = 0
@@ -162,6 +162,8 @@ class MarktplaatsScraper(BaseScraper):
                         f"{profit_percentage:.0f}% below | {deal_rating}"
                     )
                     all_cars.append(car)
+                    if on_car_found:
+                        await on_car_found(car)
 
         self.logger.info(f"Total below-market cars from Marktplaats: {len(all_cars)}")
         return all_cars

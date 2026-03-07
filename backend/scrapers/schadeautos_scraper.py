@@ -31,7 +31,7 @@ class SchadeautosScraper(BaseScraper):
         super().__init__(use_selenium=True)
         self.base_url = "https://www.schadeautos.nl"
 
-    async def scrape_search_results(self, search_terms: List[str], max_pages: int = 5) -> List[Dict]:
+    async def scrape_search_results(self, search_terms: List[str], max_pages: int = 5, on_car_found=None) -> List[Dict]:
         all_cars = []
         seen_urls = set()
         search_count = 0
@@ -146,6 +146,8 @@ class SchadeautosScraper(BaseScraper):
                         f"{profit_percentage:.0f}% below | {deal_rating}"
                     )
                     all_cars.append(candidate)
+                    if on_car_found:
+                        await on_car_found(candidate)
 
         self.logger.info(f"Total below-market cars from SchadeAutos: {len(all_cars)}")
         return all_cars
